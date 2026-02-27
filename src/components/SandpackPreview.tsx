@@ -110,10 +110,18 @@ export default function SandpackPreview({ files, projectName }: SandpackPreviewP
   const sandpackFiles = useMemo(() => {
     const merged: Record<string, string> = { ...BASE_FILES };
 
-    // Add user files, prefixing with / if needed
+    // Add user files, prefixing with / if needed and rewriting @/ aliases
     for (const [path, content] of Object.entries(files)) {
       const key = path.startsWith('/') ? path : `/${path}`;
-      merged[key] = content;
+      // Rewrite @/ import aliases to relative paths for Sandpack compatibility
+      const rewritten = content.replace(
+        /from\s+['"]@\/([^'"]+)['"]/g,
+        (_, p) => `from '../${p}'`
+      ).replace(
+        /import\s+['"]@\/([^'"]+)['"]/g,
+        (_, p) => `import '../${p}'`
+      );
+      merged[key] = rewritten;
     }
 
     // Ensure App.tsx exists
@@ -136,6 +144,13 @@ export default function SandpackPreview({ files, projectName }: SandpackPreviewP
           'react-router-dom': '^6.30.0',
           'lucide-react': '^0.462.0',
           'framer-motion': '^12.0.0',
+          'class-variance-authority': '^0.7.1',
+          'clsx': '^2.1.1',
+          'tailwind-merge': '^2.6.0',
+          'date-fns': '^3.6.0',
+          'recharts': '^2.15.0',
+          'sonner': '^1.7.0',
+          'cmdk': '^1.0.0',
         },
         entry: '/src/index.tsx',
       }}

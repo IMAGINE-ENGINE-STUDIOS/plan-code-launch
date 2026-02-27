@@ -77,7 +77,23 @@ const EditMode = () => {
       });
   }, [projectId]);
 
-  // Load persisted messages + replay file changes
+  // Load persisted files from project_files table
+  useEffect(() => {
+    if (!projectId) return;
+    supabase
+      .from('project_files')
+      .select('file_path, content')
+      .eq('project_id', projectId)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          const files: Record<string, string> = {};
+          data.forEach((f: any) => { files[f.file_path] = f.content; });
+          setPreviewFiles(files);
+        }
+      });
+  }, [projectId]);
+
+  // Load persisted messages + replay file changes on top
   useEffect(() => {
     if (!projectId) return;
     supabase
@@ -96,7 +112,7 @@ const EditMode = () => {
           data.forEach((m: DbMsg) => {
             if (m.role === 'assistant') Object.assign(allFiles, parseFileChanges(m.content));
           });
-          if (Object.keys(allFiles).length > 0) setPreviewFiles(allFiles);
+          if (Object.keys(allFiles).length > 0) setPreviewFiles(prev => ({ ...prev, ...allFiles }));
         }
       });
   }, [projectId]);
@@ -166,7 +182,16 @@ const EditMode = () => {
     const files = parseFileChanges(content);
     if (Object.keys(files).length === 0) return;
     setPreviewFiles(prev => ({ ...prev, ...files }));
-  }, []);
+    // Persist changed files to project_files
+    if (projectId && session?.user?.id) {
+      Object.entries(files).forEach(async ([file_path, fileContent]) => {
+        await supabase.from('project_files').upsert(
+          { project_id: projectId, file_path, content: fileContent },
+          { onConflict: 'project_id,file_path' }
+        );
+      });
+    }
+  }, [projectId, session]);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isStreaming || !session) return;

@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.analyze-prompt]
 verify_jwt = false
+
+[functions.import-github-repo]
+verify_jwt = false
