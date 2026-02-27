@@ -7,6 +7,13 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Cost per 1M tokens (rough estimates)
+const MODEL_COSTS: Record<string, { input: number; output: number }> = {
+  "google/gemini-3-flash-preview": { input: 0.15, output: 0.60 },
+  "google/gemini-2.5-flash": { input: 0.15, output: 0.60 },
+  "google/gemini-2.5-pro": { input: 1.25, output: 5.00 },
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -37,7 +44,6 @@ serve(async (req) => {
 
     const { messages, projectId } = await req.json();
 
-    // Verify user owns the project
     const { data: project, error: projectError } = await supabase
       .from("projects")
       .select("name, description, stack, day_one_features, status, source_repo")
@@ -52,7 +58,6 @@ serve(async (req) => {
       });
     }
 
-    // Load project secrets (key names only) using service role
     const serviceClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -63,7 +68,6 @@ serve(async (req) => {
       .eq("project_id", projectId);
     const configuredKeys = (secrets || []).map((s: any) => s.key);
 
-    // Load existing project files for context
     let fileListContext = "";
     const { data: projectFiles } = await supabase
       .from("project_files")
@@ -168,6 +172,7 @@ COMPONENT PATTERNS:
 For multi-page apps, set up BrowserRouter in App.tsx with Routes.
 ${fileListContext}
 `;
+    const modelName = "google/gemini-3-flash-preview";
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
@@ -178,7 +183,7 @@ ${fileListContext}
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: modelName,
         messages: [
           { role: "system", content: systemPrompt },
           ...messages,
@@ -208,7 +213,62 @@ ${fileListContext}
       });
     }
 
-    return new Response(response.body, {
+    // Create a TransformStream to intercept SSE and extract usage from final chunk
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+
+    // Process stream in background — forward all chunks and extract usage
+    (async () => {
+      let usageData: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          // Forward immediately
+          await writer.write(value);
+          // Try to extract usage from SSE lines
+          const text = decoder.decode(value, { stream: true });
+          for (const line of text.split("\n")) {
+            if (!line.startsWith("data: ") || line.includes("[DONE]")) continue;
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              if (parsed.usage) {
+                usageData = parsed.usage;
+              }
+            } catch { /* partial JSON, ignore */ }
+          }
+        }
+      } catch (e) {
+        console.error("stream relay error:", e);
+      } finally {
+        await writer.close();
+      }
+
+      // Log usage after stream completes
+      try {
+        const promptTokens = usageData?.prompt_tokens ?? 0;
+        const completionTokens = usageData?.completion_tokens ?? 0;
+        const totalTokens = usageData?.total_tokens ?? (promptTokens + completionTokens);
+        const costs = MODEL_COSTS[modelName] || { input: 0.15, output: 0.60 };
+        const estimatedCost = (promptTokens / 1_000_000) * costs.input + (completionTokens / 1_000_000) * costs.output;
+
+        await serviceClient.from("usage_logs").insert({
+          project_id: projectId,
+          user_id: userId,
+          model: modelName,
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: totalTokens,
+          estimated_cost: estimatedCost,
+        });
+      } catch (logErr) {
+        console.error("Failed to log usage:", logErr);
+      }
+    })();
+
+    return new Response(readable, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (e) {
