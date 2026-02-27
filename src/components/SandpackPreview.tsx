@@ -1,12 +1,81 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   SandpackProvider,
   SandpackPreview as SandpackPreviewPanel,
+  useSandpack,
 } from '@codesandbox/sandpack-react';
 
 interface SandpackPreviewProps {
   files: Record<string, string>;
   projectName: string;
+  onError?: (error: string) => void;
+}
+
+// ─── Error Listener (must be inside SandpackProvider) ───
+function ErrorListener({ onError }: { onError?: (error: string) => void }) {
+  const { listen, sandpack } = useSandpack();
+  const lastErrorRef = useRef<string>('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    if (!onError) return;
+
+    const unsub = listen((msg: any) => {
+      let errorText = '';
+
+      // Compilation/bundler errors
+      if (msg.type === 'action' && msg.action === 'show-error') {
+        errorText = msg.title || msg.message || 'Unknown build error';
+      }
+
+      // Console errors from the iframe
+      if (msg.type === 'console' && msg.codesandbox && msg.log) {
+        const logs = Array.isArray(msg.log) ? msg.log : [msg.log];
+        logs.forEach((entry: any) => {
+          if (entry.method === 'error') {
+            const text = Array.isArray(entry.data) ? entry.data.join(' ') : String(entry.data);
+            if (text && !text.includes('Download the React DevTools')) {
+              errorText = text;
+            }
+          }
+        });
+      }
+
+      // Status message with error
+      if (msg.type === 'status' && msg.status === 'error') {
+        errorText = msg.message || 'Sandpack encountered an error';
+      }
+
+      if (errorText && errorText !== lastErrorRef.current) {
+        lastErrorRef.current = errorText;
+        // Debounce to avoid spamming on rapid re-renders
+        clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          onError(errorText);
+        }, 2000);
+      }
+    });
+
+    return () => {
+      unsub();
+      clearTimeout(debounceRef.current);
+    };
+  }, [listen, onError]);
+
+  // Also check sandpack.error state
+  useEffect(() => {
+    if (!onError || !sandpack.error) return;
+    const errMsg = sandpack.error.message || String(sandpack.error);
+    if (errMsg && errMsg !== lastErrorRef.current) {
+      lastErrorRef.current = errMsg;
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        onError(errMsg);
+      }, 2000);
+    }
+  }, [sandpack.error, onError]);
+
+  return null;
 }
 
 const BASE_FILES: Record<string, string> = {
@@ -106,14 +175,12 @@ const DEFAULT_APP = `export default function App() {
   );
 }`;
 
-export default function SandpackPreview({ files, projectName }: SandpackPreviewProps) {
+export default function SandpackPreview({ files, projectName, onError }: SandpackPreviewProps) {
   const sandpackFiles = useMemo(() => {
     const merged: Record<string, string> = { ...BASE_FILES };
 
-    // Add user files, prefixing with / if needed and rewriting @/ aliases
     for (const [path, content] of Object.entries(files)) {
       const key = path.startsWith('/') ? path : `/${path}`;
-      // Rewrite @/ import aliases to relative paths for Sandpack compatibility
       const rewritten = content.replace(
         /from\s+['"]@\/([^'"]+)['"]/g,
         (_, p) => `from '../${p}'`
@@ -124,7 +191,6 @@ export default function SandpackPreview({ files, projectName }: SandpackPreviewP
       merged[key] = rewritten;
     }
 
-    // Ensure App.tsx exists
     if (!merged['/src/App.tsx'] && !merged['/src/App.jsx']) {
       merged['/src/App.tsx'] = DEFAULT_APP;
     }
@@ -164,6 +230,7 @@ export default function SandpackPreview({ files, projectName }: SandpackPreviewP
         },
       }}
     >
+      <ErrorListener onError={onError} />
       <SandpackPreviewPanel
         showOpenInCodeSandbox={false}
         showRefreshButton={true}
