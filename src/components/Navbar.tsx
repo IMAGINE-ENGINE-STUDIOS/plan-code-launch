@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Layers, Plus, LogOut } from 'lucide-react';
+import { Layers, Plus, LogOut, DollarSign } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -31,6 +31,9 @@ const Navbar = () => {
             <>
               <Button variant="ghost" size="sm" asChild>
                 <Link to="/dashboard">Dashboard</Link>
+              </Button>
+              <Button variant="ghost" size="sm" asChild>
+                <Link to="/costs"><DollarSign className="mr-1 h-4 w-4" />Costs</Link>
               </Button>
               <Button size="sm" asChild>
                 <Link to="/new-project"><Plus className="mr-1 h-4 w-4" />New Project</Link>

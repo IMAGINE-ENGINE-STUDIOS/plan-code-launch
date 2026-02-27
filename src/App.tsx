@@ -21,6 +21,7 @@ import AnalysisMode from "./pages/workspace/AnalysisMode";
 import PublishPage from "./pages/workspace/PublishPage";
 import SettingsPage from "./pages/workspace/SettingsPage";
 import VersionHistory from "./pages/workspace/VersionHistory";
+import CostsPage from "./pages/CostsPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -41,6 +42,7 @@ function App() {
                 <Route path="/new-project" element={<ProtectedRoute><NewProject /></ProtectedRoute>} />
                 <Route path="/project/new/plan" element={<ProtectedRoute><PlanReview /></ProtectedRoute>} />
                 <Route path="/import" element={<ProtectedRoute><ImportProject /></ProtectedRoute>} />
+                <Route path="/costs" element={<ProtectedRoute><CostsPage /></ProtectedRoute>} />
                 <Route path="/project/:id" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>}>
                   <Route index element={<Navigate to="dev" replace />} />
                   <Route path="plan" element={<PlanMode />} />
