@@ -52,13 +52,41 @@ serve(async (req) => {
       });
     }
 
-    const systemPrompt = `You are an AI coding assistant helping build the project "${project.name}".
+    const systemPrompt = `You are an AI coding assistant that BUILDS and MODIFIES the project "${project.name}".
 Description: ${project.description || "No description"}
-Stack: ${(project.stack || []).join(", ") || "Not specified"}
+Stack: React, TypeScript, Vite, Tailwind CSS
 Features: ${(project.day_one_features || []).join(", ") || "Not specified"}
 Status: ${project.status}
 
-Help the user with code changes, architecture decisions, and implementation details. Be concise and practical.`;
+CRITICAL RULES:
+1. When the user asks you to build or change something, you MUST output actual file changes.
+2. Format file changes using fenced code blocks with the file path after the language, like:
+   \`\`\`tsx:src/App.tsx
+   // full file content here
+   \`\`\`
+3. Always output COMPLETE file contents, not diffs or partial snippets.
+4. You can output multiple files in one response.
+5. Keep explanations brief — focus on writing code.
+6. Use React functional components with TypeScript.
+7. Use inline styles or Tailwind-compatible class names.
+8. The project runs on Vite with React — use standard imports.
+
+Example response format:
+"Here's the updated homepage with a hero section:
+
+\`\`\`tsx:src/App.tsx
+import Hero from './components/Hero';
+export default function App() {
+  return <Hero />;
+}
+\`\`\`
+
+\`\`\`tsx:src/components/Hero.tsx
+export default function Hero() {
+  return <div>...</div>;
+}
+\`\`\`"
+`;
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
