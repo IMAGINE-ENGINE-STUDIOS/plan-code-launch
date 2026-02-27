@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { Send, Trash2, Loader2, Sparkles, CheckCircle2, FileCode } from 'lucide-react';
+import {
+  Send, Trash2, Loader2, Sparkles, CheckCircle2,
+  Maximize2, Minimize2, Monitor, Tablet, Smartphone, Terminal, X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -25,11 +28,14 @@ const suggestions = [
   'Create a dashboard with data cards and charts',
 ];
 
-type ProjectData = {
-  name: string;
-  description: string;
-  day_one_features: string[];
-};
+type ProjectData = { name: string; description: string; day_one_features: string[] };
+
+type Viewport = { label: string; width: string; icon: typeof Monitor };
+const VIEWPORTS: Viewport[] = [
+  { label: 'Desktop', width: '100%', icon: Monitor },
+  { label: 'Tablet', width: '768px', icon: Tablet },
+  { label: 'Mobile', width: '375px', icon: Smartphone },
+];
 
 const EditMode = () => {
   const { id: projectId } = useParams();
@@ -41,6 +47,10 @@ const EditMode = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [project, setProject] = useState<ProjectData | null>(null);
   const [previewFiles, setPreviewFiles] = useState<Record<string, string>>({});
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [activeViewport, setActiveViewport] = useState(0);
+  const [showConsole, setShowConsole] = useState(false);
+  const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Load project data
@@ -77,25 +87,29 @@ const EditMode = () => {
               .filter((m: DbMsg) => m.role === 'user' || m.role === 'assistant')
               .map((m: DbMsg) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
           );
-          // Replay all file changes from history
           const allFiles: Record<string, string> = {};
           data.forEach((m: DbMsg) => {
-            if (m.role === 'assistant') {
-              const changes = parseFileChanges(m.content);
-              Object.assign(allFiles, changes);
-            }
+            if (m.role === 'assistant') Object.assign(allFiles, parseFileChanges(m.content));
           });
-          if (Object.keys(allFiles).length > 0) {
-            setPreviewFiles(allFiles);
-          }
+          if (Object.keys(allFiles).length > 0) setPreviewFiles(allFiles);
         }
       });
   }, [projectId]);
 
-  // Auto-scroll
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Listen for console messages from Sandpack iframe
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'console' && e.data?.log) {
+        setConsoleLogs(prev => [...prev.slice(-199), `[${e.data.method || 'log'}] ${e.data.log}`]);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   const saveMessage = useCallback(
     async (role: string, content: string) => {
@@ -203,6 +217,7 @@ const EditMode = () => {
     await supabase.from('chat_messages').delete().eq('project_id', projectId);
     setMessages([]);
     setPreviewFiles({});
+    setConsoleLogs([]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -212,9 +227,95 @@ const EditMode = () => {
     }
   };
 
-  // Count files in each assistant message
   const getFileCount = (content: string) => Object.keys(parseFileChanges(content)).length;
 
+  const vp = VIEWPORTS[activeViewport];
+
+  // ─── Fullscreen Preview ───
+  if (isFullscreen) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col bg-background">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between border-b border-border px-4 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">{project?.name || 'Preview'}</span>
+            <span className="text-xs text-muted-foreground">— {vp.label}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            {VIEWPORTS.map((v, i) => (
+              <Button
+                key={v.label}
+                variant={i === activeViewport ? 'secondary' : 'ghost'}
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setActiveViewport(i)}
+                title={v.label}
+              >
+                <v.icon className="h-3.5 w-3.5" />
+              </Button>
+            ))}
+            <div className="mx-2 h-4 w-px bg-border" />
+            <Button
+              variant={showConsole ? 'secondary' : 'ghost'}
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setShowConsole(!showConsole)}
+              title="Console"
+            >
+              <Terminal className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsFullscreen(false)} title="Exit fullscreen">
+              <Minimize2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Preview area */}
+        <div className="flex flex-1 flex-col items-center justify-start overflow-hidden bg-muted/30 p-4">
+          <div
+            className="h-full overflow-hidden rounded-lg border border-border shadow-2xl transition-all duration-300"
+            style={{ width: vp.width, maxWidth: '100%' }}
+          >
+            {project && (
+              <SandpackPreview files={previewFiles} projectName={project.name} />
+            )}
+          </div>
+        </div>
+
+        {/* Console drawer */}
+        {showConsole && (
+          <div className="border-t border-border bg-card">
+            <div className="flex items-center justify-between px-4 py-1.5">
+              <span className="text-xs font-semibold text-muted-foreground">Console</span>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setConsoleLogs([])}>
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowConsole(false)}>
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+            <ScrollArea className="h-40">
+              <div className="px-4 pb-2 font-mono text-[11px] text-muted-foreground">
+                {consoleLogs.length === 0 ? (
+                  <p className="py-4 text-center">No console output</p>
+                ) : (
+                  consoleLogs.map((log, i) => (
+                    <div key={i} className="border-b border-border/30 py-1 last:border-0">
+                      {log}
+                    </div>
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─── Normal Layout ───
   return (
     <div className="h-[calc(100vh-10rem)]">
       <ResizablePanelGroup direction="horizontal">
@@ -252,7 +353,6 @@ const EditMode = () => {
                   {messages.map((m, i) => {
                     const fileCount = m.role === 'assistant' ? getFileCount(m.content) : 0;
                     const displayContent = m.role === 'assistant' ? stripCodeBlocks(m.content) : m.content;
-
                     return (
                       <div
                         key={i}
@@ -315,21 +415,90 @@ const EditMode = () => {
         {/* Live Preview */}
         <ResizablePanel defaultSize={50} minSize={30}>
           <div className="flex h-full flex-col">
-            <div className="flex items-center gap-3 border-b border-border px-4 py-2">
-              <span className="text-sm font-semibold">Live Preview</span>
-              <span className="text-xs text-muted-foreground">
-                {project?.name || 'Loading...'}
-              </span>
+            <div className="flex items-center justify-between border-b border-border px-4 py-2">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold">Preview</span>
+                <span className="text-xs text-muted-foreground">{vp.label}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {VIEWPORTS.map((v, i) => (
+                  <Button
+                    key={v.label}
+                    variant={i === activeViewport ? 'secondary' : 'ghost'}
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setActiveViewport(i)}
+                    title={v.label}
+                  >
+                    <v.icon className="h-3.5 w-3.5" />
+                  </Button>
+                ))}
+                <div className="mx-1.5 h-4 w-px bg-border" />
+                <Button
+                  variant={showConsole ? 'secondary' : 'ghost'}
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setShowConsole(!showConsole)}
+                  title="Console"
+                >
+                  <Terminal className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setIsFullscreen(true)}
+                  title="Fullscreen"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
-            <div className="flex-1 overflow-hidden">
-              {project ? (
-                <SandpackPreview
-                  files={previewFiles}
-                  projectName={project.name}
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+
+            {/* Preview with viewport */}
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <div className="flex flex-1 items-start justify-center overflow-hidden bg-muted/20 p-2">
+                <div
+                  className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300"
+                  style={{ width: vp.width, maxWidth: '100%' }}
+                >
+                  {project ? (
+                    <SandpackPreview files={previewFiles} projectName={project.name} />
+                  ) : (
+                    <div className="flex h-full items-center justify-center">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Console panel (inline) */}
+              {showConsole && (
+                <div className="border-t border-border bg-card">
+                  <div className="flex items-center justify-between px-4 py-1.5">
+                    <span className="text-xs font-semibold text-muted-foreground">Console</span>
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setConsoleLogs([])}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowConsole(false)}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                  <ScrollArea className="h-32">
+                    <div className="px-4 pb-2 font-mono text-[11px] text-muted-foreground">
+                      {consoleLogs.length === 0 ? (
+                        <p className="py-3 text-center">No console output</p>
+                      ) : (
+                        consoleLogs.map((log, i) => (
+                          <div key={i} className="border-b border-border/30 py-1 last:border-0">
+                            {log}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
                 </div>
               )}
             </div>
