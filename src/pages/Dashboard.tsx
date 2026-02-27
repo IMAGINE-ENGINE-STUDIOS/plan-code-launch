@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 const Dashboard = () => {
   const { user } = useAuth();
 
-  const { data: projects = [], isLoading } = useQuery({
+  const { data: projects = [], isLoading, refetch } = useQuery({
     queryKey: ['projects', user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -63,7 +63,7 @@ const Dashboard = () => {
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map(p => <ProjectCard key={p.id} project={p} />)}
+            {projects.map(p => <ProjectCard key={p.id} project={p} onDeleted={() => refetch()} onRemixed={() => refetch()} />)}
           </div>
         )}
       </div>
