@@ -1,44 +1,41 @@
 
 
-## Problem
+## Plan: Enable Lovable Cloud and Wire Up Full Project Flow
 
-The wizard flow ends at step 4 with "Generate Plan" but navigates to `/project/new/plan` — a route that doesn't exist. There's no intermediate "plan review" screen with a **"Build Project"** button, and no Supabase connection to persist projects.
+### Step 1 — Enable Lovable Cloud
+Connect Lovable Cloud to get Supabase backend (auth, database, edge functions). This is a prerequisite for everything else.
 
-## Plan
+### Step 2 — Create database tables via migrations
+- **`projects`** table: `id` (uuid, PK), `user_id` (uuid, FK to auth.users, ON DELETE CASCADE), `name` (text), `description` (text), `status` (text, default 'draft'), `build_type` (text), `code_source` (text), `priorities` (text[]), `day_one_features` (text[]), `stack` (text[]), `created_at` (timestamptz), `updated_at` (timestamptz)
+- **`plans`** table: `id` (uuid, PK), `project_id` (uuid, FK to projects, ON DELETE CASCADE), `sections` (jsonb), `created_at` (timestamptz)
+- RLS policies: users can only CRUD their own projects/plans (filter by `user_id` or join through `projects`)
 
-### 1. Connect Supabase to the project
-- Use the Supabase connector to link an external Supabase project for Auth, Database, and Storage
-- This gives us a typed Supabase client and edge functions support
+### Step 3 — Add Supabase client integration
+- Create `src/integrations/supabase/client.ts` with typed Supabase client
+- Generate TypeScript types for the new tables
 
-### 2. Create a Plan Review page (`/project/new/plan`)
-- New page at `src/pages/PlanReview.tsx`
-- Receives wizard answers (via URL state or a simple context/store)
-- Generates a mock plan from the answers (using the existing `mockPlan` logic, tailored to the selected `buildType`, `priorities`, and `dayOneFeatures`)
-- Displays the plan sections (Summary, Assumptions, MVP Features, Data Model, Routes, Cost Controls)
-- Has a prominent **"Build Project"** button at the bottom
-- Has a "Back to Questions" link to go back and edit answers
+### Step 4 — Add authentication
+- Wire up the existing `Auth.tsx` page to use real Supabase auth (signUp, signInWithPassword)
+- Add auth state management (context or hook) with `onAuthStateChange`
+- Protect `/dashboard`, `/new-project`, and `/project/*` routes behind auth
+- Add sign-out to Navbar
 
-### 3. Add a wizard answers context
-- Create `src/contexts/WizardContext.tsx` — a simple React context to pass `WizardAnswers` from the wizard to the plan review page without URL params
-- Wrap the relevant routes with this provider
+### Step 5 — Wire "Build Project" button to Supabase
+- In `PlanReview.tsx`, on "Build Project" click:
+  1. Insert a row into `projects` with wizard answers
+  2. Insert a row into `plans` with generated plan sections as JSONB
+  3. Navigate to `/project/{new-id}/plan`
 
-### 4. Wire up the "Build Project" button
-- On click: create a new project record in Supabase (`projects` table) with the wizard answers and generated plan
-- Save the plan sections to a `plans` table
-- Navigate to `/project/{new-id}/plan` (the workspace)
-- Show a loading/building animation during creation
+### Step 6 — Load real data in workspace
+- **`PlanMode.tsx`**: Fetch plan from Supabase by `project_id` instead of using `mockPlan`
+- **`ProjectWorkspace.tsx`**: Fetch project from Supabase by `id` instead of using `mockProjects`
+- **`Dashboard.tsx`**: Query user's projects from Supabase instead of `mockProjects`
 
-### 5. Add the route in App.tsx
-- Add `<Route path="/project/new/plan" element={<PlanReview />} />` **before** the `/project/:id` route so it doesn't get caught by the param route
+### Step 7 — Update Settings page
+- Wire "Save Changes" in `SettingsPage.tsx` to update project name/description in Supabase
 
-### 6. Create Supabase tables (migrations)
-- `projects` table: id, user_id, name, description, status, build_type, code_source, priorities, day_one_features, stack, created_at, updated_at
-- `plans` table: id, project_id, sections (jsonb), created_at
-- RLS policies: users can only read/write their own projects
-
-### 7. Update PlanMode in workspace
-- Load the real plan from Supabase instead of `mockPlan`
-- Show the plan that was generated during project creation
-
-This gives you a complete flow: **Wizard → Plan Review → "Build Project" button → Project saved to Supabase → Workspace opens**.
+### Technical details
+- All Supabase queries use the typed client with RLS — no service role key needed on the client
+- Auth state is checked via `onAuthStateChange` listener set up before `getSession()`
+- The WizardContext remains for passing data between `/new-project` and `/project/new/plan` within a session; Supabase persists it permanently on "Build"
 
