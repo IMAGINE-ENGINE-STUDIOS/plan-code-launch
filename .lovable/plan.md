@@ -1,41 +1,23 @@
 
 
-## Plan: Enable Lovable Cloud and Wire Up Full Project Flow
+## Plan: Fix Remaining Issues and Complete the Build
 
-### Step 1 — Enable Lovable Cloud
-Connect Lovable Cloud to get Supabase backend (auth, database, edge functions). This is a prerequisite for everything else.
+### Issue 1 — Enable auto-confirm for testing
+You signed up but got "Check your email" — you can't sign in without confirming. Enable auto-confirm so signups work immediately during development.
+- Use the configure-auth tool to enable auto-confirm
 
-### Step 2 — Create database tables via migrations
-- **`projects`** table: `id` (uuid, PK), `user_id` (uuid, FK to auth.users, ON DELETE CASCADE), `name` (text), `description` (text), `status` (text, default 'draft'), `build_type` (text), `code_source` (text), `priorities` (text[]), `day_one_features` (text[]), `stack` (text[]), `created_at` (timestamptz), `updated_at` (timestamptz)
-- **`plans`** table: `id` (uuid, PK), `project_id` (uuid, FK to projects, ON DELETE CASCADE), `sections` (jsonb), `created_at` (timestamptz)
-- RLS policies: users can only CRUD their own projects/plans (filter by `user_id` or join through `projects`)
+### Issue 2 — Fix ProtectedRoute forwardRef warning
+`ProtectedRoute` is used as a `<Route element>` child which causes a React ref warning.
+- Wrap the component export with a fragment or adjust how it's used in routes — minor cosmetic fix
 
-### Step 3 — Add Supabase client integration
-- Create `src/integrations/supabase/client.ts` with typed Supabase client
-- Generate TypeScript types for the new tables
+### Issue 3 — Fix SettingsPage state initialization anti-pattern  
+`SettingsPage` sets state during render (`if (initialized) { setName(...) }`) which is a React anti-pattern.
+- Move to `useEffect` to sync form state when project data loads
 
-### Step 4 — Add authentication
-- Wire up the existing `Auth.tsx` page to use real Supabase auth (signUp, signInWithPassword)
-- Add auth state management (context or hook) with `onAuthStateChange`
-- Protect `/dashboard`, `/new-project`, and `/project/*` routes behind auth
-- Add sign-out to Navbar
+### Issue 4 — Verify the trigger was created
+The `update_updated_at_column` function exists but the database shows no triggers — need to confirm the trigger is attached to the `projects` table.
+- Check and create trigger if missing via migration
 
-### Step 5 — Wire "Build Project" button to Supabase
-- In `PlanReview.tsx`, on "Build Project" click:
-  1. Insert a row into `projects` with wizard answers
-  2. Insert a row into `plans` with generated plan sections as JSONB
-  3. Navigate to `/project/{new-id}/plan`
-
-### Step 6 — Load real data in workspace
-- **`PlanMode.tsx`**: Fetch plan from Supabase by `project_id` instead of using `mockPlan`
-- **`ProjectWorkspace.tsx`**: Fetch project from Supabase by `id` instead of using `mockProjects`
-- **`Dashboard.tsx`**: Query user's projects from Supabase instead of `mockProjects`
-
-### Step 7 — Update Settings page
-- Wire "Save Changes" in `SettingsPage.tsx` to update project name/description in Supabase
-
-### Technical details
-- All Supabase queries use the typed client with RLS — no service role key needed on the client
-- Auth state is checked via `onAuthStateChange` listener set up before `getSession()`
-- The WizardContext remains for passing data between `/new-project` and `/project/new/plan` within a session; Supabase persists it permanently on "Build"
+### Summary
+The app builds and runs. The blocker is email confirmation preventing sign-in. Three minor code quality fixes round it out.
 
