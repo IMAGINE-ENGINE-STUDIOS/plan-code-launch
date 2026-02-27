@@ -193,6 +193,50 @@ export type Database = {
         }
         Relationships: []
       }
+      usage_logs: {
+        Row: {
+          completion_tokens: number
+          created_at: string
+          estimated_cost: number
+          id: string
+          model: string
+          project_id: string
+          prompt_tokens: number
+          total_tokens: number
+          user_id: string
+        }
+        Insert: {
+          completion_tokens?: number
+          created_at?: string
+          estimated_cost?: number
+          id?: string
+          model?: string
+          project_id: string
+          prompt_tokens?: number
+          total_tokens?: number
+          user_id: string
+        }
+        Update: {
+          completion_tokens?: number
+          created_at?: string
+          estimated_cost?: number
+          id?: string
+          model?: string
+          project_id?: string
+          prompt_tokens?: number
+          total_tokens?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usage_logs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
