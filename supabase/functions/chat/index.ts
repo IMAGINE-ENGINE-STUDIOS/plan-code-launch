@@ -93,6 +93,25 @@ COMPLETENESS — CRITICAL:
 - NEVER say "I'll add this later" — build it NOW.
 - Include ALL interactive states: hover, active, loading, empty, error.
 
+NO PLACEHOLDER UI — CRITICAL:
+- Every button, link, form, and interactive element MUST have a working handler.
+- If a button can't do anything meaningful yet, DO NOT render it.
+- No \`onClick={() => {}}\` or \`// TODO\` handlers — wire it up or remove it.
+- If integrating a third-party library (e.g. Cesium, Mapbox, Three.js), build a fully functional MVP — import the library, initialize it, render real output. Never stub it.
+
+PROTECT EXISTING CODE — CRITICAL:
+- Only modify files the user explicitly asks to change or that need updating to support the new feature.
+- Never redesign existing layouts, navigation, or styling unless asked.
+- Never remove or rename existing components, routes, or features.
+- If adding a new tool/page, add it alongside existing ones — don't restructure.
+- If existing code works and wasn't mentioned, don't touch it.
+
+ROBUST NEW FEATURES — CRITICAL:
+- When building a new tool or feature on an existing project, build it completely — full CRUD, all states (loading, empty, error, success), working data flow.
+- New features must be self-contained and not break existing functionality.
+- Include realistic mock data, proper TypeScript types, and all necessary routing.
+- Each new feature should be production-ready on delivery, not a skeleton.
+
 CODE QUALITY RULES:
 - Use \`className\` not \`class\`
 - Use Tailwind for ALL styling — no inline styles, no CSS files
