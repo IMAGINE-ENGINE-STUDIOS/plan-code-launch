@@ -1,35 +1,33 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { Send, Trash2, FileCode, Smartphone, Tablet, Monitor, Loader2, Sparkles, Globe } from 'lucide-react';
+import { Send, Trash2, FileCode, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import ReactMarkdown from 'react-markdown';
+import StackBlitzPreview, { type StackBlitzPreviewHandle } from '@/components/StackBlitzPreview';
+import { parseFileChanges, hasFileChanges } from '@/lib/parse-file-changes';
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 type DbMsg = { id: string; role: string; content: string; created_at: string };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
 
-const changedFiles = ['src/pages/Dashboard.tsx', 'src/components/MetricsCard.tsx', 'src/lib/api.ts'];
-
 const suggestions = [
-  'Add a login page with email/password',
-  'Create a dashboard with metrics cards',
-  'Set up a REST API for user data',
+  'Build the homepage with a hero section and navigation',
+  'Add a user authentication page with login and signup',
+  'Create a dashboard with data cards and charts',
 ];
 
-const viewports = [
-  { value: '375', label: 'Mobile', icon: Smartphone },
-  { value: '768', label: 'Tablet', icon: Tablet },
-  { value: '1280', label: 'Desktop', icon: Monitor },
-] as const;
+type ProjectData = {
+  name: string;
+  description: string;
+  day_one_features: string[];
+};
 
 const EditMode = () => {
   const { id: projectId } = useParams();
@@ -39,10 +37,29 @@ const EditMode = () => {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [viewport, setViewport] = useState('1280');
-  const [previewRoute, setPreviewRoute] = useState('/');
+  const [project, setProject] = useState<ProjectData | null>(null);
+  const [changedFiles, setChangedFiles] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewRef = useRef<StackBlitzPreviewHandle>(null);
+
+  // Load project data
+  useEffect(() => {
+    if (!projectId) return;
+    supabase
+      .from('projects')
+      .select('name, description, day_one_features')
+      .eq('id', projectId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setProject({
+            name: data.name,
+            description: data.description,
+            day_one_features: data.day_one_features || [],
+          });
+        }
+      });
+  }, [projectId]);
 
   // Load persisted messages
   useEffect(() => {
@@ -54,10 +71,19 @@ const EditMode = () => {
       .order('created_at', { ascending: true })
       .then(({ data }) => {
         if (data) {
-          setMessages(data.filter((m: DbMsg) => m.role === 'user' || m.role === 'assistant').map((m: DbMsg) => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.content,
-          })));
+          setMessages(
+            data
+              .filter((m: DbMsg) => m.role === 'user' || m.role === 'assistant')
+              .map((m: DbMsg) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+          );
+          // Collect changed files from existing messages
+          const allFiles = new Set<string>();
+          data.forEach((m: DbMsg) => {
+            if (m.role === 'assistant') {
+              Object.keys(parseFileChanges(m.content)).forEach(f => allFiles.add(f));
+            }
+          });
+          setChangedFiles(Array.from(allFiles));
         }
       });
   }, [projectId]);
@@ -67,15 +93,42 @@ const EditMode = () => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const saveMessage = useCallback(async (role: string, content: string) => {
-    if (!projectId || !session?.user?.id) return;
-    await supabase.from('chat_messages').insert({
-      project_id: projectId,
-      user_id: session.user.id,
-      role,
-      content,
-    });
-  }, [projectId, session]);
+  const saveMessage = useCallback(
+    async (role: string, content: string) => {
+      if (!projectId || !session?.user?.id) return;
+      await supabase.from('chat_messages').insert({
+        project_id: projectId,
+        user_id: session.user.id,
+        role,
+        content,
+      });
+    },
+    [projectId, session]
+  );
+
+  const applyFilesToPreview = useCallback(
+    async (content: string) => {
+      const files = parseFileChanges(content);
+      if (Object.keys(files).length === 0) return;
+
+      // Update changed files list
+      setChangedFiles(prev => {
+        const updated = new Set(prev);
+        Object.keys(files).forEach(f => updated.add(f));
+        return Array.from(updated);
+      });
+
+      // Apply to StackBlitz
+      if (previewRef.current) {
+        try {
+          await previewRef.current.applyFileChanges(files);
+        } catch (err) {
+          console.error('Failed to apply files to preview:', err);
+        }
+      }
+    },
+    []
+  );
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || isStreaming || !session) return;
@@ -93,7 +146,7 @@ const EditMode = () => {
       setMessages(prev => {
         const last = prev[prev.length - 1];
         if (last?.role === 'assistant') {
-          return prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantSoFar } : m);
+          return prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: assistantSoFar } : m));
         }
         return [...prev, { role: 'assistant', content: assistantSoFar }];
       });
@@ -151,6 +204,9 @@ const EditMode = () => {
       }
 
       await saveMessage('assistant', assistantSoFar);
+
+      // Auto-apply file changes to preview
+      await applyFilesToPreview(assistantSoFar);
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
@@ -162,6 +218,7 @@ const EditMode = () => {
     if (!projectId) return;
     await supabase.from('chat_messages').delete().eq('project_id', projectId);
     setMessages([]);
+    setChangedFiles([]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -190,7 +247,7 @@ const EditMode = () => {
               {messages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center gap-4 py-12">
                   <Sparkles className="h-8 w-8 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">Ask me anything about your project</p>
+                  <p className="text-sm text-muted-foreground">Describe what to build</p>
                   <div className="flex flex-col gap-2">
                     {suggestions.map(s => (
                       <button
@@ -206,8 +263,23 @@ const EditMode = () => {
               ) : (
                 <div className="space-y-4">
                   {messages.map((m, i) => (
-                    <div key={i} className={`rounded-lg p-3 text-sm ${m.role === 'user' ? 'bg-muted/50' : 'bg-primary/5 border border-primary/10'}`}>
-                      <p className="mb-1 text-xs font-medium text-muted-foreground">{m.role === 'user' ? 'You' : 'AI'}</p>
+                    <div
+                      key={i}
+                      className={`rounded-lg p-3 text-sm ${
+                        m.role === 'user' ? 'bg-muted/50' : 'bg-primary/5 border border-primary/10'
+                      }`}
+                    >
+                      <div className="mb-1 flex items-center gap-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          {m.role === 'user' ? 'You' : 'AI'}
+                        </p>
+                        {m.role === 'assistant' && hasFileChanges(m.content) && (
+                          <span className="flex items-center gap-0.5 text-xs text-primary">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Applied
+                          </span>
+                        )}
+                      </div>
                       {m.role === 'assistant' ? (
                         <div className="prose prose-sm max-w-none dark:prose-invert">
                           <ReactMarkdown>{m.content}</ReactMarkdown>
@@ -220,7 +292,7 @@ const EditMode = () => {
                   {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Thinking...
+                      Building...
                     </div>
                   )}
                   <div ref={scrollRef} />
@@ -231,11 +303,10 @@ const EditMode = () => {
             <div className="border-t border-border p-3">
               <div className="flex gap-2">
                 <Textarea
-                  ref={textareaRef}
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Describe changes… (Enter to send)"
+                  placeholder="Describe what to build… (Enter to send)"
                   className="min-h-[40px] max-h-[120px] resize-none text-sm"
                   rows={1}
                 />
@@ -249,40 +320,28 @@ const EditMode = () => {
 
         <ResizableHandle withHandle />
 
-        {/* Preview Panel */}
+        {/* Live Preview Panel */}
         <ResizablePanel defaultSize={55} minSize={30}>
           <div className="flex h-full flex-col">
             <div className="flex items-center gap-3 border-b border-border px-4 py-2">
-              <ToggleGroup type="single" value={viewport} onValueChange={v => v && setViewport(v)} size="sm">
-                {viewports.map(vp => (
-                  <ToggleGroupItem key={vp.value} value={vp.value} aria-label={vp.label}>
-                    <vp.icon className="h-3.5 w-3.5" />
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-              <div className="flex flex-1 items-center gap-1.5 rounded-md border border-border bg-muted/30 px-2 py-1">
-                <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  value={previewRoute}
-                  onChange={e => setPreviewRoute(e.target.value)}
-                  className="h-6 border-0 bg-transparent p-0 text-xs focus-visible:ring-0"
-                  placeholder="/"
-                />
-              </div>
-              <span className="text-xs text-muted-foreground">{viewport}px</span>
+              <span className="text-sm font-semibold">Live Preview</span>
+              <span className="text-xs text-muted-foreground">
+                {project?.name || 'Loading...'}
+              </span>
             </div>
-            <div className="flex flex-1 items-start justify-center overflow-auto bg-muted/20 p-4">
-              <div
-                className="h-full rounded-lg border border-border bg-background shadow-sm transition-all duration-300"
-                style={{ width: `${Math.min(parseInt(viewport), 1280)}px`, maxWidth: '100%' }}
-              >
-                <iframe
-                  src={`${window.location.origin}${previewRoute}`}
-                  className="h-full w-full rounded-lg"
-                  sandbox="allow-scripts allow-same-origin allow-forms"
-                  title="Preview"
+            <div className="flex-1 overflow-hidden">
+              {project ? (
+                <StackBlitzPreview
+                  ref={previewRef}
+                  projectName={project.name}
+                  projectDescription={project.description}
+                  features={project.day_one_features}
                 />
-              </div>
+              ) : (
+                <div className="flex h-full items-center justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              )}
             </div>
           </div>
         </ResizablePanel>
@@ -294,16 +353,26 @@ const EditMode = () => {
           <div className="flex h-full flex-col">
             <div className="border-b border-border px-4 py-2">
               <span className="text-sm font-semibold">Changed Files</span>
+              <span className="ml-1.5 text-xs text-muted-foreground">({changedFiles.length})</span>
             </div>
             <ScrollArea className="flex-1 p-2">
-              <div className="space-y-0.5">
-                {changedFiles.map(f => (
-                  <div key={f} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted/50">
-                    <FileCode className="h-3.5 w-3.5 shrink-0 text-primary" />
-                    <span className="truncate">{f}</span>
-                  </div>
-                ))}
-              </div>
+              {changedFiles.length === 0 ? (
+                <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                  No files changed yet. Start chatting to build your app.
+                </p>
+              ) : (
+                <div className="space-y-0.5">
+                  {changedFiles.map(f => (
+                    <div
+                      key={f}
+                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted/50"
+                    >
+                      <FileCode className="h-3.5 w-3.5 shrink-0 text-primary" />
+                      <span className="truncate">{f}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </ScrollArea>
           </div>
         </ResizablePanel>
