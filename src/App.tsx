@@ -1,0 +1,57 @@
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { WizardProvider } from "@/contexts/WizardContext";
+import Index from "./pages/Index";
+import Auth from "./pages/Auth";
+import Dashboard from "./pages/Dashboard";
+import NewProject from "./pages/NewProject";
+import PlanReview from "./pages/PlanReview";
+import ImportReport from "./pages/ImportReport";
+import ProjectWorkspace from "./pages/workspace/ProjectWorkspace";
+import PlanMode from "./pages/workspace/PlanMode";
+import EditMode from "./pages/workspace/EditMode";
+import DevMode from "./pages/workspace/DevMode";
+import AnalysisMode from "./pages/workspace/AnalysisMode";
+import PublishPage from "./pages/workspace/PublishPage";
+import SettingsPage from "./pages/workspace/SettingsPage";
+import VersionHistory from "./pages/workspace/VersionHistory";
+import NotFound from "./pages/NotFound";
+
+const queryClient = new QueryClient();
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <Toaster />
+      <Sonner />
+      <BrowserRouter>
+        <WizardProvider>
+          <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/auth" element={<Auth />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/new-project" element={<NewProject />} />
+            <Route path="/project/new/plan" element={<PlanReview />} />
+            <Route path="/import" element={<ImportReport />} />
+            <Route path="/project/:id" element={<ProjectWorkspace />}>
+              <Route index element={<Navigate to="plan" replace />} />
+              <Route path="plan" element={<PlanMode />} />
+              <Route path="edit" element={<EditMode />} />
+              <Route path="dev" element={<DevMode />} />
+              <Route path="analysis" element={<AnalysisMode />} />
+              <Route path="publish" element={<PublishPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="versions" element={<VersionHistory />} />
+            </Route>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </WizardProvider>
+      </BrowserRouter>
+    </TooltipProvider>
+  </QueryClientProvider>
+);
+
+export default App;
