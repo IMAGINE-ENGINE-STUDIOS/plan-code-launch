@@ -1,50 +1,55 @@
 
 
-## AI Chat + Device Preview for Edit Tab
+## Why it looks bad
 
-### Step 1 — Database Migration
+Three root causes:
 
-Create `supabase/migrations/20260227_create_chat_messages.sql`:
-- `chat_messages` table: `id` (uuid PK), `project_id` (FK to projects), `user_id` (uuid), `role` (text, check user/assistant/system), `content` (text), `created_at` (timestamptz)
-- RLS policies: SELECT, INSERT, DELETE scoped to project owner via `auth.uid()`
-- `updated_at` trigger on `projects` table using existing `update_updated_at_column` function
-- Enable realtime for `chat_messages`
+1. **Tailwind via CDN is the pre-built CSS** — only includes default utility classes. Custom classes like `bg-gray-950`, `backdrop-blur-md`, gradients, etc. don't exist in the CDN build. Most AI-generated styling silently fails.
 
-### Step 2 — Chat Edge Function
+2. **StackBlitz WebContainers are slow and unreliable** — cold boot takes 15-30s, dependency installs often stall, and the embedded preview frequently shows loading spinners or blank screens. This is a fundamental limitation of running a full Node.js environment in-browser.
 
-Create `supabase/functions/chat/index.ts`:
-- CORS headers, OPTIONS handler
-- Auth: extract user from Authorization header
-- Verify user owns the project via projects table query
-- Build system prompt with project name, description, stack, features, status
-- Call Lovable AI gateway (`https://api.lovable.dev/v1/chat/completions`) with `google/gemini-2.5-flash`, streaming enabled
-- Pass SSE stream through to client
-- Set `verify_jwt = false` in config.toml, validate auth in code
+3. **Chat dumps raw code blocks** — the AI response shows hundreds of lines of code inline in a tiny chat panel. There's no separate code viewer, no diff view, no way to inspect individual files. It's unreadable.
 
-### Step 3 — Rewrite `EditMode.tsx`
+## What "like Lovable" actually requires
 
-Replace entire static mockup with three resizable panels:
+Lovable runs a real cloud build pipeline (Vite dev server on a remote VM), not an in-browser sandbox. Replicating that is out of scope. But we can get **dramatically closer** with these changes:
 
-**Left: Chat Panel (30%)**
-- Load persisted messages from `chat_messages` on mount
-- Send user messages to the chat edge function via `fetch` with SSE streaming
-- Parse SSE chunks, update assistant message content progressively
-- Save both user and assistant messages to database after completion
-- Clear chat button deletes from DB
-- Empty state with prompt suggestions
-- Enter to send, Shift+Enter for newline
+## Plan
 
-**Center: Device Preview (55%)**
-- Viewport toggle buttons: Mobile (375px), Tablet (768px), Desktop (1280px)
-- Route input for previewing specific pages
-- iframe with sandbox, resizes to selected viewport width
+### 1. Replace StackBlitz with a Sandpack-based preview
+- Use CodeSandbox's **Sandpack** (`@codesandbox/sandpack-react`) instead of StackBlitz
+- Sandpack boots in ~2 seconds (vs 15-30s), runs entirely in-browser with no Node.js, and has native Vite support
+- It includes a built-in Tailwind JIT compiler via `@tailwindcss/browser` — all utility classes work
+- The scaffold becomes a Sandpack `files` prop that updates reactively — no VM API needed
 
-**Right: Changed Files Sidebar (15%)**
-- Keep existing static file list (to be connected to real data later)
+### 2. Hide code from chat, show in a tabbed code viewer
+- Strip code blocks from the rendered chat messages (show only the explanatory text + an "Applied N files" badge)
+- Replace the "Changed Files" sidebar with a **tabbed code viewer** that shows actual file contents with syntax highlighting
+- Clicking a file tab shows its content; the active file is highlighted
 
-### Files Created/Modified
-1. `supabase/migrations/20260227_create_chat_messages.sql` — new
-2. `supabase/functions/chat/index.ts` — new
-3. `supabase/config.toml` — add `[functions.chat] verify_jwt = false`
-4. `src/pages/workspace/EditMode.tsx` — full rewrite
+### 3. Improve the AI system prompt for higher quality output
+- Add explicit instructions: use `className` not `class`, use Tailwind JIT-compatible classes, use proper TypeScript types
+- Include a richer scaffold with a `types.ts` file and sample data so the AI has structure to build on
+- Tell the AI to output a file manifest summary (e.g. "Created 3 files: Navbar.tsx, PropertyCard.tsx, types.ts") before the code blocks
+
+### 4. Auto-apply files on history reload
+- When loading persisted chat messages, replay all file changes into Sandpack so the preview shows the latest state
+
+## Technical details
+
+**Sandpack integration** replaces `StackBlitzPreview.tsx`:
+- `@codesandbox/sandpack-react` with `vite` template
+- Files passed as `Record<string, string>` prop — React-native updates, no imperative API
+- Dark theme via `sandpackDark` theme
+- Tailwind works via the Sandpack Tailwind add-on or by including the CDN with `@tailwindcss/browser` script
+
+**Chat rendering** changes in `EditMode.tsx`:
+- Before rendering markdown, strip ` ```lang:path ``` ` blocks from display content
+- Show a collapsed "N files changed" summary with expand toggle
+- Pass extracted files to the code viewer component
+
+**Code viewer** — new component `CodeViewer.tsx`:
+- Uses `<pre><code>` with basic syntax highlighting (or Sandpack's built-in `SandpackCodeViewer`)
+- Tab bar showing changed file names
+- Read-only view of file contents
 
