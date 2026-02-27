@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Send, Trash2, Loader2, Sparkles, CheckCircle2,
-  Maximize2, Minimize2, Monitor, Tablet, Smartphone, Terminal, X, MousePointer2,
+  Maximize2, Minimize2, Monitor, Tablet, Smartphone, Terminal, X, MousePointer2, AlertTriangle, Wrench,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -55,6 +55,10 @@ const EditMode = () => {
   const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
   const [queue, setQueue] = useState<string[]>([]);
   const [selectMode, setSelectMode] = useState(false);
+  const [autoFixEnabled, setAutoFixEnabled] = useState(true);
+  const [lastFixedError, setLastFixedError] = useState('');
+  const [isAutoFixing, setIsAutoFixing] = useState(false);
+  const autoFixCountRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<(text: string) => Promise<void>>();
 
@@ -335,6 +339,47 @@ const EditMode = () => {
     });
   };
 
+  // ─── Auto Error Correction ───
+  const MAX_AUTO_FIXES = 3;
+
+  const handlePreviewError = useCallback((error: string) => {
+    if (!autoFixEnabled || isStreaming || isAutoFixing) return;
+    if (error === lastFixedError) return; // Don't retry the same error
+    if (autoFixCountRef.current >= MAX_AUTO_FIXES) {
+      toast({
+        title: 'Auto-fix limit reached',
+        description: 'Reached max auto-fix attempts. Please fix manually or describe the issue.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Build a list of current file names for context
+    const fileList = Object.keys(previewFiles).slice(0, 20).join(', ');
+    const fixPrompt = `The preview is showing an error. Fix it without changing the app's features, structure, or UI design. Preserve all existing functionality.\n\nError: ${error.slice(0, 500)}\n\nCurrent files: ${fileList}\n\nIMPORTANT: Only fix the error. Do NOT remove features, components, or UI elements. Output the corrected file(s) only.`;
+
+    setLastFixedError(error);
+    setIsAutoFixing(true);
+    autoFixCountRef.current += 1;
+
+    // Add auto-fix message to chat visually
+    setConsoleLogs(prev => [...prev.slice(-199), `[auto-fix] Detected error, attempting fix #${autoFixCountRef.current}…`]);
+
+    // Queue the fix (will run after current streaming if any)
+    if (sendRef.current) {
+      sendRef.current(fixPrompt).finally(() => setIsAutoFixing(false));
+    } else {
+      setIsAutoFixing(false);
+    }
+  }, [autoFixEnabled, isStreaming, isAutoFixing, lastFixedError, previewFiles, toast]);
+
+  // Reset auto-fix counter when user sends a manual message
+  const handleSubmitWithReset = (text: string) => {
+    autoFixCountRef.current = 0;
+    setLastFixedError('');
+    handleSubmit(text);
+  };
+
   const vp = VIEWPORTS[activeViewport];
 
   // ─── Fullscreen Preview ───
@@ -363,7 +408,7 @@ const EditMode = () => {
         </div>
         <div className="flex flex-1 flex-col items-center justify-start overflow-hidden bg-muted/30 p-4">
           <div className="h-full overflow-hidden rounded-lg border border-border shadow-2xl transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
-            {project && <SandpackPreview files={previewFiles} projectName={project.name} />}
+            {project && <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} />}
           </div>
         </div>
         {showConsole && (
@@ -409,7 +454,7 @@ const EditMode = () => {
                   <p className="text-sm text-muted-foreground">Describe what to build</p>
                   <div className="flex flex-col gap-2">
                     {suggestions.map(s => (
-                      <button key={s} onClick={() => handleSubmit(s)} className="rounded-lg border border-border px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50">
+                      <button key={s} onClick={() => handleSubmitWithReset(s)} className="rounded-lg border border-border px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50">
                         {s}
                       </button>
                     ))}
@@ -440,7 +485,7 @@ const EditMode = () => {
                   })}
                   {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />Building...
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />{isAutoFixing ? 'Auto-fixing error…' : 'Building...'}
                     </div>
                   )}
                   <div ref={scrollRef} />
@@ -457,20 +502,40 @@ const EditMode = () => {
                 <Textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitWithReset(input); } }}
                   placeholder={isStreaming ? 'Type to queue next prompt…' : 'Describe what to build… (Enter to send)'}
                   className="min-h-[40px] max-h-[120px] resize-none text-sm"
                   rows={1}
                 />
-                <Button size="icon" onClick={() => handleSubmit(input)} disabled={!input.trim()}>
+                <Button size="icon" onClick={() => handleSubmitWithReset(input)} disabled={!input.trim()}>
                   {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </Button>
               </div>
               {isStreaming && (
                 <p className="mt-1 text-[10px] text-muted-foreground">
-                  AI is building… new prompts will be queued automatically
+                  {isAutoFixing ? '🔧 Auto-fixing detected error…' : 'AI is building… new prompts will be queued automatically'}
                 </p>
               )}
+              {/* Auto-fix toggle */}
+              <div className="mt-2 flex items-center justify-between">
+                <button
+                  onClick={() => setAutoFixEnabled(prev => !prev)}
+                  className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+                    autoFixEnabled
+                      ? 'bg-primary/10 text-primary'
+                      : 'bg-muted/50 text-muted-foreground'
+                  }`}
+                >
+                  <Wrench className="h-3 w-3" />
+                  Auto-fix {autoFixEnabled ? 'ON' : 'OFF'}
+                </button>
+                {autoFixCountRef.current > 0 && (
+                  <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <AlertTriangle className="h-3 w-3" />
+                    {autoFixCountRef.current}/{MAX_AUTO_FIXES} fixes used
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </ResizablePanel>
@@ -527,7 +592,7 @@ const EditMode = () => {
               <div className="flex flex-1 items-start justify-center overflow-hidden bg-muted/20 p-2">
                 <div className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
                   {project ? (
-                    <SandpackPreview files={previewFiles} projectName={project.name} />
+                    <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} />
                   ) : (
                     <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
                   )}
