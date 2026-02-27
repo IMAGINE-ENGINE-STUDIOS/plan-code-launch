@@ -1,55 +1,48 @@
 
 
-## Why it looks bad
+## Plan: Command Queue, Plan Mode, and Visual Edit Mode
 
-Three root causes:
+### 1. Command Queue in Edit Mode
+Add a queued prompt system to `EditMode.tsx`:
+- New state: `queue: string[]` — holds pending prompts
+- When user submits while AI is streaming, push to queue instead of blocking
+- Show queue visually below the input (numbered list with X to remove)
+- After each AI response completes, auto-pop the next item from queue and send it
+- Queue persists only in-memory (session-scoped)
 
-1. **Tailwind via CDN is the pre-built CSS** — only includes default utility classes. Custom classes like `bg-gray-950`, `backdrop-blur-md`, gradients, etc. don't exist in the CDN build. Most AI-generated styling silently fails.
+### 2. Plan Mode — Interactive AI Planning
+Replace the current read-only `PlanMode.tsx` with an interactive planning page:
+- Chat-like input where user describes what they want to build
+- AI generates a structured plan (sections with tasks) using a dedicated edge function or the existing chat function with a "plan" system prompt
+- Plan sections render as editable cards — user can approve, edit, or remove items
+- "Build This Plan" button converts approved plan items into queued prompts and navigates to Edit mode with the queue pre-filled
+- Save/update plans to the existing `plans` table
 
-2. **StackBlitz WebContainers are slow and unreliable** — cold boot takes 15-30s, dependency installs often stall, and the embedded preview frequently shows loading spinners or blank screens. This is a fundamental limitation of running a full Node.js environment in-browser.
+### 3. Visual Edit Mode (Select-to-Edit)
+Add a new "Select" interaction mode to the Edit tab:
+- Toggle button in the preview toolbar: "Select Mode" (crosshair icon)
+- When active, the Sandpack preview iframe listens for clicks and highlights hovered elements with an outline overlay
+- On click, capture the element's tag, text content, and CSS classes
+- Populate the chat input with a context-aware prompt like: "Edit the [Button] with text 'Sign Up' in the hero section — "
+- User completes the sentence with what they want changed, then sends
+- Deactivate select mode after selection
 
-3. **Chat dumps raw code blocks** — the AI response shows hundreds of lines of code inline in a tiny chat panel. There's no separate code viewer, no diff view, no way to inspect individual files. It's unreadable.
+### Technical Details
 
-## What "like Lovable" actually requires
+**Command Queue** — all in `EditMode.tsx`:
+- `const [queue, setQueue] = useState<string[]>([])` 
+- Modified `sendMessage`: if `isStreaming`, push to queue and return
+- New `useEffect` watching `isStreaming`: when it becomes `false` and queue has items, shift and send
+- Queue UI: collapsible list between chat and input showing pending items
 
-Lovable runs a real cloud build pipeline (Vite dev server on a remote VM), not an in-browser sandbox. Replicating that is out of scope. But we can get **dramatically closer** with these changes:
+**Plan Mode** — rewrite `PlanMode.tsx`:
+- Uses the existing `chat` edge function but with a planning-specific user prompt wrapper
+- Parse AI response into sections, render as interactive cards
+- "Build Plan" button maps sections to prompt strings, navigates to `/project/:id/edit?queue=encoded`
+- EditMode reads queue from URL params on mount
 
-## Plan
-
-### 1. Replace StackBlitz with a Sandpack-based preview
-- Use CodeSandbox's **Sandpack** (`@codesandbox/sandpack-react`) instead of StackBlitz
-- Sandpack boots in ~2 seconds (vs 15-30s), runs entirely in-browser with no Node.js, and has native Vite support
-- It includes a built-in Tailwind JIT compiler via `@tailwindcss/browser` — all utility classes work
-- The scaffold becomes a Sandpack `files` prop that updates reactively — no VM API needed
-
-### 2. Hide code from chat, show in a tabbed code viewer
-- Strip code blocks from the rendered chat messages (show only the explanatory text + an "Applied N files" badge)
-- Replace the "Changed Files" sidebar with a **tabbed code viewer** that shows actual file contents with syntax highlighting
-- Clicking a file tab shows its content; the active file is highlighted
-
-### 3. Improve the AI system prompt for higher quality output
-- Add explicit instructions: use `className` not `class`, use Tailwind JIT-compatible classes, use proper TypeScript types
-- Include a richer scaffold with a `types.ts` file and sample data so the AI has structure to build on
-- Tell the AI to output a file manifest summary (e.g. "Created 3 files: Navbar.tsx, PropertyCard.tsx, types.ts") before the code blocks
-
-### 4. Auto-apply files on history reload
-- When loading persisted chat messages, replay all file changes into Sandpack so the preview shows the latest state
-
-## Technical details
-
-**Sandpack integration** replaces `StackBlitzPreview.tsx`:
-- `@codesandbox/sandpack-react` with `vite` template
-- Files passed as `Record<string, string>` prop — React-native updates, no imperative API
-- Dark theme via `sandpackDark` theme
-- Tailwind works via the Sandpack Tailwind add-on or by including the CDN with `@tailwindcss/browser` script
-
-**Chat rendering** changes in `EditMode.tsx`:
-- Before rendering markdown, strip ` ```lang:path ``` ` blocks from display content
-- Show a collapsed "N files changed" summary with expand toggle
-- Pass extracted files to the code viewer component
-
-**Code viewer** — new component `CodeViewer.tsx`:
-- Uses `<pre><code>` with basic syntax highlighting (or Sandpack's built-in `SandpackCodeViewer`)
-- Tab bar showing changed file names
-- Read-only view of file contents
+**Visual Select** — additions to `EditMode.tsx` + iframe messaging:
+- Inject a script into Sandpack's `index.html` that posts `{ type: 'element-selected', tag, text, classes }` on click when select mode is active
+- `EditMode` listens for this message, populates input with contextual prompt
+- Toggle button with `MousePointer2` icon in the preview toolbar
 
