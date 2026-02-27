@@ -5,14 +5,18 @@ import { ArrowLeft, CheckCircle2, FileText, Rocket, Loader2 } from 'lucide-react
 import { Button } from '@/components/ui/button';
 import Navbar from '@/components/Navbar';
 import { useWizard } from '@/contexts/WizardContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { generatePlan } from '@/lib/generate-plan';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 const PlanReview = () => {
   const navigate = useNavigate();
   const { answers } = useWizard();
+  const { user } = useAuth();
+  const { toast } = useToast();
   const [building, setBuilding] = useState(false);
 
-  // Redirect if no answers
   if (!answers.buildType) {
     navigate('/new-project', { replace: true });
     return null;
@@ -21,12 +25,42 @@ const PlanReview = () => {
   const plan = generatePlan(answers);
 
   const handleBuild = async () => {
+    if (!user) return;
     setBuilding(true);
-    // TODO: Save to Supabase (projects + plans tables)
-    // For now, simulate a short delay then navigate to workspace
-    await new Promise(r => setTimeout(r, 1500));
-    // Use a temp id until Supabase is connected
-    navigate('/project/new-build/plan', { replace: true });
+
+    try {
+      // Insert project
+      const { data: project, error: projErr } = await supabase
+        .from('projects')
+        .insert({
+          user_id: user.id,
+          name: `${answers.buildType} Project`,
+          description: `Built from ${answers.codeSource}`,
+          build_type: answers.buildType,
+          code_source: answers.codeSource,
+          priorities: answers.priorities,
+          day_one_features: answers.dayOneFeatures,
+        })
+        .select()
+        .single();
+
+      if (projErr) throw projErr;
+
+      // Insert plan
+      const { error: planErr } = await supabase
+        .from('plans')
+        .insert({
+          project_id: project.id,
+          sections: plan as any,
+        });
+
+      if (planErr) throw planErr;
+
+      navigate(`/project/${project.id}/plan`, { replace: true });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+      setBuilding(false);
+    }
   };
 
   return (
