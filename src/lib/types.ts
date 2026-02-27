@@ -46,4 +46,7 @@ export interface WizardAnswers {
   codeSource: string;
   priorities: string[];
   dayOneFeatures: string[];
+  projectName?: string;
+  description?: string;
+  prompt?: string;
 }

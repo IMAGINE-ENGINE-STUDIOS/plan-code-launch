@@ -18,12 +18,12 @@ const PlanReview = () => {
   const [building, setBuilding] = useState(false);
 
   useEffect(() => {
-    if (!answers.buildType) {
+    if (!answers.buildType && !answers.prompt) {
       navigate('/new-project', { replace: true });
     }
-  }, [answers.buildType, navigate]);
+  }, [answers.buildType, answers.prompt, navigate]);
 
-  if (!answers.buildType) {
+  if (!answers.buildType && !answers.prompt) {
     return null;
   }
 
@@ -39,8 +39,8 @@ const PlanReview = () => {
         .from('projects')
         .insert({
           user_id: user.id,
-          name: `${answers.buildType} Project`,
-          description: `Built from ${answers.codeSource}`,
+          name: answers.projectName || `${answers.buildType} Project`,
+          description: answers.description || `Built from ${answers.codeSource}`,
           build_type: answers.buildType,
           code_source: answers.codeSource,
           priorities: answers.priorities,
