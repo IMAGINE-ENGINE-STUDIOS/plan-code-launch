@@ -1,79 +1,66 @@
 
+Goal: make Dev mode actually usable (open files, see code, preview app, live console), and stop the “clicking files does nothing” behavior.
 
-## Plan: AI Chat Feature for Edit Tab + Device Preview + Fixes
+Implementation steps:
 
-### Confirmed: The app builds and works
-I tested end-to-end: sign up, wizard, Build Project — all succeed. The project saves to the database and loads in the workspace. The Edit tab is currently a **static mockup** with no real functionality.
+1) Fix workspace landing behavior
+- Update project workspace index redirect from `plan` to `dev` so users land directly in the coding workspace.
+- Keep all tabs accessible.
 
-### What we're building
+2) Replace mock explorer with real source-driven file list
+- Remove `mockFileTree` usage in `DevMode.tsx`.
+- Build file inventory from real project sources using a raw file loader and generate a nested tree from paths.
+- Add selectable file nodes (not just expandable folders).
 
-The Edit tab becomes a real AI-powered chat interface with:
-- **AI chat** using Lovable AI (Gemini) via an edge function
-- **Persistent messages** stored in a `chat_messages` table
-- **Command system** (`/build`, `/deploy`, `/status`) with parsed responses
-- **Device preview panel** with mobile/tablet/desktop viewport toggles
-- **Changed files sidebar** (kept)
-- **Build status indicator**
+3) Implement file open + editor panel
+- Add `selectedFilePath` state and open file content when a file is clicked.
+- Replace placeholder with a real code pane (monospace, scrollable, line numbers).
+- Add file header (path, modified indicator), and empty-state only when no file selected.
 
-### Implementation Steps
+4) Add device preview panel (mobile/tablet/desktop)
+- Add viewport toggle controls in Dev mode: mobile, tablet, desktop.
+- Render app preview in an iframe with responsive width presets and scaling.
+- Add route input (default `/`) so user can preview specific pages.
 
-**Step 1 — Database: Create `chat_messages` table**
-- Columns: `id`, `project_id`, `user_id`, `role` (user/assistant/system), `content`, `created_at`
-- RLS: users can only read/write messages for their own projects
-- Add the `updated_at` trigger to `projects` table (still missing)
+5) Make console actually live
+- Replace hardcoded console lines with runtime logs captured from the preview iframe (`console.log/warn/error`, runtime errors, unhandled rejections).
+- Add timestamp + level badges, clear button, and auto-scroll.
+- Keep this fully local to avoid paid AI usage for console actions.
 
-**Step 2 — Edge function: `chat` endpoint**
-- Accepts `{ messages, projectId }` from the client
-- Adds a system prompt with project context
-- Streams response from Lovable AI gateway using SSE
-- Handles `/build`, `/deploy`, `/status` commands server-side
-- Returns streamed tokens to the client
-- Handles 429/402 errors
+6) Add command input for Dev console
+- Add command bar supporting `/build`, `/status`, `/deploy`.
+- `/status`: print current project status + timestamp.
+- `/build`: set status to building, emit progress logs, then complete/fail state.
+- `/deploy`: show deployment guidance/status message in console.
+- Command handlers run without AI calls unless explicitly needed.
 
-**Step 3 — Rewrite `EditMode.tsx`**
-- Replace static mockup with real chat:
-  - Load persisted messages from `chat_messages` on mount
-  - Send new messages to the edge function
-  - Stream AI responses token-by-token, update UI progressively
-  - Save both user and assistant messages to database
-  - Parse commands (`/build`, `/deploy`, `/status`) and show structured responses
-- Add device preview panel:
-  - Three viewport toggle buttons: mobile (375px), tablet (768px), desktop (1280px)
-  - An iframe or preview container that resizes to simulate the selected device
-  - Show the current project's preview URL in the iframe
-- Keep the changed files sidebar
-- Add a build status indicator (icon + text showing draft/building/published)
+7) Connect project status to backend data
+- Read/write `projects.status` for build lifecycle changes from Dev commands.
+- Reflect current status in Dev header badge.
 
-**Step 4 — Fix the forwardRef warning**
-- The warning persists because `App` is still being rendered via `createRoot(<App />)` — the issue is actually from React Router internally. Fix by wrapping `App` export with `React.forwardRef` or restructuring the render tree so the ref isn't forwarded to a function component.
+8) QA pass with screenshots
+- Verify: click file → code opens immediately.
+- Verify: preview switches correctly between mobile/tablet/desktop sizes.
+- Verify: console captures live preview logs/errors.
+- Verify: `/build` changes status and prints progress logs.
+- Capture screenshots for: file open state, each device mode, and live console output.
 
-### Technical Details
-
-```text
-┌─────────────────────────────────────────────────────┐
-│ Edit Tab Layout                                      │
-├──────────────┬───────────────────────┬───────────────┤
-│              │                       │               │
-│   Chat       │   Device Preview      │  Changed      │
-│   Panel      │   ┌─────────────┐    │  Files        │
-│              │   │ Mobile │Tab│PC│   │  Sidebar      │
-│   AI msgs    │   │             │    │               │
-│   User msgs  │   │  iframe     │    │  file1.tsx    │
-│   Commands   │   │  preview    │    │  file2.tsx    │
-│              │   │             │    │               │
-│              │   └─────────────┘    │               │
-├──────────────┤   Build: ● draft     │               │
-│ [input] [⏎]  │                       │               │
-└──────────────┴───────────────────────┴───────────────┘
-```
-
-**Database migration SQL:**
-- `chat_messages` table with `project_id` FK, `role`, `content`, `created_at`
-- RLS policies scoped to project owner
-- Trigger for `updated_at` on `projects`
-
-**Edge function:** `supabase/functions/chat/index.ts`
-- Uses `LOVABLE_API_KEY` (already configured)
-- Streams via SSE
-- System prompt includes project type and features from the project record
-
+Technical details:
+- Files loading:
+  - Use Vite raw source loading (`import.meta.glob(..., { eager: true, as: 'raw' })`) to read actual code files into the Dev explorer/editor.
+  - Exclude heavy/unnecessary paths and non-text assets.
+- File tree model:
+  - Normalize paths -> build hierarchical nodes -> stable sort (folders first, then files).
+- Preview isolation:
+  - Same-origin iframe for reliable log capture and route preview.
+  - Guard against recursive preview of `/project/:id/dev`.
+- Console bridge:
+  - Attach listeners on iframe load.
+  - Capture `console.*`, `window.onerror`, `unhandledrejection`.
+  - Convert args safely to strings for readable output.
+- Performance:
+  - Memoize file tree generation.
+  - Virtualize long log list if needed.
+- Safety/cost:
+  - No AI call for file open, preview, console, or command parsing.
+  - AI only invoked in chat flows when explicitly sent by user.
