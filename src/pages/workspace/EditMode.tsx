@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Send, Trash2, Loader2, Sparkles, CheckCircle2,
-  Maximize2, Minimize2, Monitor, Tablet, Smartphone, Terminal, X,
+  Maximize2, Minimize2, Monitor, Tablet, Smartphone, Terminal, X, MousePointer2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -14,6 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import ReactMarkdown from 'react-markdown';
 import SandpackPreview from '@/components/SandpackPreview';
 import CodeViewer from '@/components/CodeViewer';
+import CommandQueue from '@/components/CommandQueue';
 import { parseFileChanges, hasFileChanges } from '@/lib/parse-file-changes';
 import { stripCodeBlocks } from '@/lib/strip-code-blocks';
 
@@ -39,6 +40,7 @@ const VIEWPORTS: Viewport[] = [
 
 const EditMode = () => {
   const { id: projectId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const { toast } = useToast();
 
@@ -51,7 +53,10 @@ const EditMode = () => {
   const [activeViewport, setActiveViewport] = useState(0);
   const [showConsole, setShowConsole] = useState(false);
   const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
+  const [queue, setQueue] = useState<string[]>([]);
+  const [selectMode, setSelectMode] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sendRef = useRef<(text: string) => Promise<void>>();
 
   // Load project data
   useEffect(() => {
@@ -96,20 +101,53 @@ const EditMode = () => {
       });
   }, [projectId]);
 
+  // Load queue from URL params (from PlanMode)
+  useEffect(() => {
+    const queueParam = searchParams.get('queue');
+    if (queueParam) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(queueParam));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setQueue(parsed);
+          // Clean up URL
+          searchParams.delete('queue');
+          setSearchParams(searchParams, { replace: true });
+        }
+      } catch {}
+    }
+  }, []);
+
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Listen for console messages from Sandpack iframe
+  // Console messages from Sandpack iframe
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'console' && e.data?.log) {
         setConsoleLogs(prev => [...prev.slice(-199), `[${e.data.method || 'log'}] ${e.data.log}`]);
       }
+      // Visual select mode
+      if (e.data?.type === 'element-selected' && selectMode) {
+        const { tag, text, classes } = e.data;
+        const desc = text ? ` with text "${text.slice(0, 50)}"` : '';
+        const cls = classes ? ` (classes: ${classes})` : '';
+        setInput(`Edit the <${tag}>${desc}${cls} — `);
+        setSelectMode(false);
+      }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, []);
+  }, [selectMode]);
+
+  // Auto-process queue when streaming finishes
+  useEffect(() => {
+    if (!isStreaming && queue.length > 0 && sendRef.current) {
+      const next = queue[0];
+      setQueue(prev => prev.slice(1));
+      sendRef.current(next);
+    }
+  }, [isStreaming, queue]);
 
   const saveMessage = useCallback(
     async (role: string, content: string) => {
@@ -130,7 +168,7 @@ const EditMode = () => {
     setPreviewFiles(prev => ({ ...prev, ...files }));
   }, []);
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isStreaming || !session) return;
 
     const userMsg: Msg = { role: 'user', content: text.trim() };
@@ -210,6 +248,35 @@ const EditMode = () => {
     } finally {
       setIsStreaming(false);
     }
+  }, [messages, isStreaming, session, projectId, saveMessage, applyFilesToPreview, toast]);
+
+  // Keep ref updated
+  useEffect(() => { sendRef.current = sendMessage; }, [sendMessage]);
+
+  // Auto-start queue processing on mount if queue loaded from URL
+  useEffect(() => {
+    if (queue.length > 0 && !isStreaming && messages.length === 0 && sendRef.current) {
+      const timer = setTimeout(() => {
+        if (queue.length > 0 && sendRef.current) {
+          const next = queue[0];
+          setQueue(prev => prev.slice(1));
+          sendRef.current(next);
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [queue, isStreaming, messages.length]);
+
+  const handleSubmit = (text: string) => {
+    if (!text.trim()) return;
+    if (isStreaming) {
+      // Add to queue instead of blocking
+      setQueue(prev => [...prev, text.trim()]);
+      setInput('');
+      toast({ title: 'Queued', description: `Added to queue (position ${queue.length + 1})` });
+    } else {
+      sendMessage(text);
+    }
   };
 
   const clearChat = async () => {
@@ -218,16 +285,30 @@ const EditMode = () => {
     setMessages([]);
     setPreviewFiles({});
     setConsoleLogs([]);
+    setQueue([]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendMessage(input);
+      handleSubmit(input);
     }
   };
 
   const getFileCount = (content: string) => Object.keys(parseFileChanges(content)).length;
+
+  const removeFromQueue = (index: number) => setQueue(prev => prev.filter((_, i) => i !== index));
+
+  const toggleSelectMode = () => {
+    setSelectMode(prev => !prev);
+    // Post message to Sandpack iframe
+    const iframes = document.querySelectorAll('iframe');
+    iframes.forEach(iframe => {
+      try {
+        iframe.contentWindow?.postMessage({ type: 'toggle-select-mode', active: !selectMode }, '*');
+      } catch {}
+    });
+  };
 
   const vp = VIEWPORTS[activeViewport];
 
@@ -235,7 +316,6 @@ const EditMode = () => {
   if (isFullscreen) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col bg-background">
-        {/* Toolbar */}
         <div className="flex items-center justify-between border-b border-border px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold">{project?.name || 'Preview'}</span>
@@ -243,25 +323,12 @@ const EditMode = () => {
           </div>
           <div className="flex items-center gap-1">
             {VIEWPORTS.map((v, i) => (
-              <Button
-                key={v.label}
-                variant={i === activeViewport ? 'secondary' : 'ghost'}
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setActiveViewport(i)}
-                title={v.label}
-              >
+              <Button key={v.label} variant={i === activeViewport ? 'secondary' : 'ghost'} size="icon" className="h-7 w-7" onClick={() => setActiveViewport(i)} title={v.label}>
                 <v.icon className="h-3.5 w-3.5" />
               </Button>
             ))}
             <div className="mx-2 h-4 w-px bg-border" />
-            <Button
-              variant={showConsole ? 'secondary' : 'ghost'}
-              size="icon"
-              className="h-7 w-7"
-              onClick={() => setShowConsole(!showConsole)}
-              title="Console"
-            >
+            <Button variant={showConsole ? 'secondary' : 'ghost'} size="icon" className="h-7 w-7" onClick={() => setShowConsole(!showConsole)} title="Console">
               <Terminal className="h-3.5 w-3.5" />
             </Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsFullscreen(false)} title="Exit fullscreen">
@@ -269,44 +336,23 @@ const EditMode = () => {
             </Button>
           </div>
         </div>
-
-        {/* Preview area */}
         <div className="flex flex-1 flex-col items-center justify-start overflow-hidden bg-muted/30 p-4">
-          <div
-            className="h-full overflow-hidden rounded-lg border border-border shadow-2xl transition-all duration-300"
-            style={{ width: vp.width, maxWidth: '100%' }}
-          >
-            {project && (
-              <SandpackPreview files={previewFiles} projectName={project.name} />
-            )}
+          <div className="h-full overflow-hidden rounded-lg border border-border shadow-2xl transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
+            {project && <SandpackPreview files={previewFiles} projectName={project.name} />}
           </div>
         </div>
-
-        {/* Console drawer */}
         {showConsole && (
           <div className="border-t border-border bg-card">
             <div className="flex items-center justify-between px-4 py-1.5">
               <span className="text-xs font-semibold text-muted-foreground">Console</span>
               <div className="flex items-center gap-1">
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setConsoleLogs([])}>
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowConsole(false)}>
-                  <X className="h-3 w-3" />
-                </Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setConsoleLogs([])}><Trash2 className="h-3 w-3" /></Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowConsole(false)}><X className="h-3 w-3" /></Button>
               </div>
             </div>
             <ScrollArea className="h-40">
               <div className="px-4 pb-2 font-mono text-[11px] text-muted-foreground">
-                {consoleLogs.length === 0 ? (
-                  <p className="py-4 text-center">No console output</p>
-                ) : (
-                  consoleLogs.map((log, i) => (
-                    <div key={i} className="border-b border-border/30 py-1 last:border-0">
-                      {log}
-                    </div>
-                  ))
-                )}
+                {consoleLogs.length === 0 ? <p className="py-4 text-center">No console output</p> : consoleLogs.map((log, i) => <div key={i} className="border-b border-border/30 py-1 last:border-0">{log}</div>)}
               </div>
             </ScrollArea>
           </div>
@@ -338,11 +384,7 @@ const EditMode = () => {
                   <p className="text-sm text-muted-foreground">Describe what to build</p>
                   <div className="flex flex-col gap-2">
                     {suggestions.map(s => (
-                      <button
-                        key={s}
-                        onClick={() => sendMessage(s)}
-                        className="rounded-lg border border-border px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50"
-                      >
+                      <button key={s} onClick={() => handleSubmit(s)} className="rounded-lg border border-border px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50">
                         {s}
                       </button>
                     ))}
@@ -354,27 +396,17 @@ const EditMode = () => {
                     const fileCount = m.role === 'assistant' ? getFileCount(m.content) : 0;
                     const displayContent = m.role === 'assistant' ? stripCodeBlocks(m.content) : m.content;
                     return (
-                      <div
-                        key={i}
-                        className={`rounded-lg p-3 text-sm ${
-                          m.role === 'user' ? 'bg-muted/50' : 'bg-primary/5 border border-primary/10'
-                        }`}
-                      >
+                      <div key={i} className={`rounded-lg p-3 text-sm ${m.role === 'user' ? 'bg-muted/50' : 'bg-primary/5 border border-primary/10'}`}>
                         <div className="mb-1 flex items-center gap-1.5">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            {m.role === 'user' ? 'You' : 'AI'}
-                          </p>
+                          <p className="text-xs font-medium text-muted-foreground">{m.role === 'user' ? 'You' : 'AI'}</p>
                           {fileCount > 0 && (
                             <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-                              <CheckCircle2 className="h-3 w-3" />
-                              {fileCount} file{fileCount > 1 ? 's' : ''} applied
+                              <CheckCircle2 className="h-3 w-3" />{fileCount} file{fileCount > 1 ? 's' : ''} applied
                             </span>
                           )}
                         </div>
                         {m.role === 'assistant' ? (
-                          <div className="prose prose-sm max-w-none dark:prose-invert">
-                            <ReactMarkdown>{displayContent}</ReactMarkdown>
-                          </div>
+                          <div className="prose prose-sm max-w-none dark:prose-invert"><ReactMarkdown>{displayContent}</ReactMarkdown></div>
                         ) : (
                           <p className="whitespace-pre-wrap">{m.content}</p>
                         )}
@@ -383,8 +415,7 @@ const EditMode = () => {
                   })}
                   {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Building...
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />Building...
                     </div>
                   )}
                   <div ref={scrollRef} />
@@ -392,20 +423,29 @@ const EditMode = () => {
               )}
             </ScrollArea>
 
+            {/* Command Queue */}
+            <CommandQueue queue={queue} onRemove={removeFromQueue} onClear={() => setQueue([])} />
+
+            {/* Input */}
             <div className="border-t border-border p-3">
               <div className="flex gap-2">
                 <Textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Describe what to build… (Enter to send)"
+                  placeholder={isStreaming ? 'Type to queue next prompt…' : 'Describe what to build… (Enter to send)'}
                   className="min-h-[40px] max-h-[120px] resize-none text-sm"
                   rows={1}
                 />
-                <Button size="icon" onClick={() => sendMessage(input)} disabled={isStreaming || !input.trim()}>
+                <Button size="icon" onClick={() => handleSubmit(input)} disabled={!input.trim()}>
                   {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </Button>
               </div>
+              {isStreaming && (
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  AI is building… new prompts will be queued automatically
+                </p>
+              )}
             </div>
           </div>
         </ResizablePanel>
@@ -422,81 +462,65 @@ const EditMode = () => {
               </div>
               <div className="flex items-center gap-1">
                 {VIEWPORTS.map((v, i) => (
-                  <Button
-                    key={v.label}
-                    variant={i === activeViewport ? 'secondary' : 'ghost'}
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={() => setActiveViewport(i)}
-                    title={v.label}
-                  >
+                  <Button key={v.label} variant={i === activeViewport ? 'secondary' : 'ghost'} size="icon" className="h-7 w-7" onClick={() => setActiveViewport(i)} title={v.label}>
                     <v.icon className="h-3.5 w-3.5" />
                   </Button>
                 ))}
                 <div className="mx-1.5 h-4 w-px bg-border" />
                 <Button
-                  variant={showConsole ? 'secondary' : 'ghost'}
+                  variant={selectMode ? 'default' : 'ghost'}
                   size="icon"
                   className="h-7 w-7"
-                  onClick={() => setShowConsole(!showConsole)}
-                  title="Console"
+                  onClick={toggleSelectMode}
+                  title="Select element to edit"
                 >
+                  <MousePointer2 className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant={showConsole ? 'secondary' : 'ghost'} size="icon" className="h-7 w-7" onClick={() => setShowConsole(!showConsole)} title="Console">
                   <Terminal className="h-3.5 w-3.5" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => setIsFullscreen(true)}
-                  title="Fullscreen"
-                >
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsFullscreen(true)} title="Fullscreen">
                   <Maximize2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
             </div>
 
-            {/* Preview with viewport */}
+            {/* Select mode banner */}
+            {selectMode && (
+              <div className="flex items-center justify-between bg-primary/10 px-4 py-1.5 text-xs text-primary">
+                <span className="flex items-center gap-1.5">
+                  <MousePointer2 className="h-3 w-3" />
+                  Click an element in the preview to target it for editing
+                </span>
+                <Button variant="ghost" size="sm" className="h-5 px-2 text-[10px]" onClick={() => setSelectMode(false)}>
+                  Cancel
+                </Button>
+              </div>
+            )}
+
             <div className="flex flex-1 flex-col overflow-hidden">
               <div className="flex flex-1 items-start justify-center overflow-hidden bg-muted/20 p-2">
-                <div
-                  className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300"
-                  style={{ width: vp.width, maxWidth: '100%' }}
-                >
+                <div className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
                   {project ? (
                     <SandpackPreview files={previewFiles} projectName={project.name} />
                   ) : (
-                    <div className="flex h-full items-center justify-center">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    </div>
+                    <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
                   )}
                 </div>
               </div>
 
-              {/* Console panel (inline) */}
               {showConsole && (
                 <div className="border-t border-border bg-card">
                   <div className="flex items-center justify-between px-4 py-1.5">
                     <span className="text-xs font-semibold text-muted-foreground">Console</span>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setConsoleLogs([])}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowConsole(false)}>
-                        <X className="h-3 w-3" />
-                      </Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setConsoleLogs([])}><Trash2 className="h-3 w-3" /></Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowConsole(false)}><X className="h-3 w-3" /></Button>
                     </div>
                   </div>
                   <ScrollArea className="h-32">
                     <div className="px-4 pb-2 font-mono text-[11px] text-muted-foreground">
-                      {consoleLogs.length === 0 ? (
-                        <p className="py-3 text-center">No console output</p>
-                      ) : (
-                        consoleLogs.map((log, i) => (
-                          <div key={i} className="border-b border-border/30 py-1 last:border-0">
-                            {log}
-                          </div>
-                        ))
-                      )}
+                      {consoleLogs.length === 0 ? <p className="py-3 text-center">No console output</p> : consoleLogs.map((log, i) => <div key={i} className="border-b border-border/30 py-1 last:border-0">{log}</div>)}
                     </div>
                   </ScrollArea>
                 </div>
