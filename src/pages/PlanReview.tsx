@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, CheckCircle2, FileText, Rocket, Loader2 } from 'lucide-react';
@@ -17,8 +17,13 @@ const PlanReview = () => {
   const { toast } = useToast();
   const [building, setBuilding] = useState(false);
 
+  useEffect(() => {
+    if (!answers.buildType) {
+      navigate('/new-project', { replace: true });
+    }
+  }, [answers.buildType, navigate]);
+
   if (!answers.buildType) {
-    navigate('/new-project', { replace: true });
     return null;
   }
 
@@ -56,7 +61,7 @@ const PlanReview = () => {
 
       if (planErr) throw planErr;
 
-      navigate(`/project/${project.id}/plan`, { replace: true });
+      navigate(`/project/${project.id}/dev`, { replace: true });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
       setBuilding(false);
