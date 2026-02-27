@@ -1,16 +1,20 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  ChevronRight, ChevronDown, File, Folder, Terminal, X,
-  Smartphone, Tablet, Monitor, Send, Trash2, Circle,
+  ChevronRight, ChevronDown, File, Folder,
+  Smartphone, Tablet, Monitor, Circle, Loader2, Wrench, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import SandpackPreview from '@/components/SandpackPreview';
 import { type TreeNode, getFileContents, buildFileTree } from '@/lib/file-tree';
+import { parseFileChanges } from '@/lib/parse-file-changes';
 
 // ─── File Tree Item ───
 const FileTreeItem = ({
@@ -50,14 +54,6 @@ const FileTreeItem = ({
   );
 };
 
-// ─── Console Log Type ───
-type LogEntry = {
-  id: number;
-  level: 'log' | 'warn' | 'error' | 'info' | 'system';
-  message: string;
-  timestamp: Date;
-};
-
 // ─── Viewport presets ───
 const viewports = [
   { key: 'mobile', icon: Smartphone, width: 375, label: 'Mobile' },
@@ -65,10 +61,13 @@ const viewports = [
   { key: 'desktop', icon: Monitor, width: 1280, label: 'Desktop' },
 ] as const;
 
-let logIdCounter = 0;
+const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
+const MAX_AUTO_FIXES = 3;
 
 const DevMode = () => {
   const { id: projectId } = useParams();
+  const { session } = useAuth();
+  const { toast } = useToast();
 
   // File state
   const fileContents = useMemo(() => getFileContents(), []);
@@ -77,16 +76,17 @@ const DevMode = () => {
 
   // Preview state
   const [viewport, setViewport] = useState<'mobile' | 'tablet' | 'desktop'>('desktop');
-  const [previewRoute, setPreviewRoute] = useState('/');
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  // Console state
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [command, setCommand] = useState('');
-  const consoleEndRef = useRef<HTMLDivElement>(null);
+  const [previewFiles, setPreviewFiles] = useState<Record<string, string>>({});
 
   // Project status
   const [projectStatus, setProjectStatus] = useState<string>('draft');
+
+  // Auto-fix state
+  const [autoFixEnabled, setAutoFixEnabled] = useState(true);
+  const [isAutoFixing, setIsAutoFixing] = useState(false);
+  const [lastFixedError, setLastFixedError] = useState('');
+  const autoFixCountRef = useRef(0);
+  const [fixLog, setFixLog] = useState<string[]>([]);
 
   // Load project status
   useEffect(() => {
@@ -95,75 +95,136 @@ const DevMode = () => {
       .then(({ data }) => { if (data) setProjectStatus(data.status); });
   }, [projectId]);
 
-  // Auto-scroll console
+  // Load persisted files
   useEffect(() => {
-    consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
-
-  const addLog = useCallback((level: LogEntry['level'], message: string) => {
-    setLogs(prev => [...prev.slice(-200), { id: ++logIdCounter, level, message, timestamp: new Date() }]);
-  }, []);
-
-  // Initial system log
-  useEffect(() => {
-    addLog('system', 'Dev console ready. Type /help for commands.');
-  }, [addLog]);
-
-  // ─── Command handler ───
-  const handleCommand = useCallback(async (cmd: string) => {
-    const trimmed = cmd.trim();
-    if (!trimmed) return;
-    addLog('info', `> ${trimmed}`);
-
-    if (trimmed === '/help') {
-      addLog('system', 'Available commands: /status, /build, /deploy, /clear');
-    } else if (trimmed === '/status') {
-      addLog('system', `Project status: ${projectStatus} | ${new Date().toLocaleTimeString()}`);
-    } else if (trimmed === '/build') {
-      addLog('system', '🔨 Starting build...');
-      if (projectId) {
-        await supabase.from('projects').update({ status: 'building' }).eq('id', projectId);
-        setProjectStatus('building');
-      }
-      setTimeout(() => addLog('info', '[build] Compiling TypeScript...'), 500);
-      setTimeout(() => addLog('info', '[build] Bundling assets...'), 1200);
-      setTimeout(() => {
-        addLog('system', '✅ Build completed successfully');
-        if (projectId) {
-          supabase.from('projects').update({ status: 'compatible' }).eq('id', projectId);
-          setProjectStatus('compatible');
+    if (!projectId) return;
+    supabase
+      .from('project_files')
+      .select('file_path, content')
+      .eq('project_id', projectId)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          const files: Record<string, string> = {};
+          data.forEach((f: any) => { files[f.file_path] = f.content; });
+          setPreviewFiles(files);
         }
-      }, 2200);
-    } else if (trimmed === '/deploy') {
-      addLog('system', '🚀 Deploy initiated. Go to the Publish tab to configure deployment.');
-    } else if (trimmed === '/clear') {
-      setLogs([]);
-    } else {
-      addLog('warn', `Unknown command: ${trimmed}. Type /help for commands.`);
-    }
-  }, [addLog, projectId, projectStatus]);
+      });
+  }, [projectId]);
 
   const selectedContent = selectedFile ? fileContents.get(selectedFile) ?? '' : '';
   const lines = selectedContent.split('\n');
   const currentViewport = viewports.find(v => v.key === viewport)!;
 
-  const previewUrl = `${window.location.origin}${previewRoute}`;
-
-  const levelColor: Record<string, string> = {
-    log: 'text-foreground',
-    info: 'text-[hsl(var(--info))]',
-    warn: 'text-[hsl(var(--warning))]',
-    error: 'text-destructive',
-    system: 'text-primary',
-  };
-
   const statusColor: Record<string, string> = {
     draft: 'bg-muted text-muted-foreground',
-    building: 'bg-[hsl(var(--warning))]/20 text-[hsl(var(--warning))]',
-    compatible: 'bg-[hsl(var(--success))]/20 text-[hsl(var(--success))]',
+    building: 'bg-primary/20 text-primary',
+    compatible: 'bg-primary/20 text-primary',
     published: 'bg-primary/20 text-primary',
     needs_attention: 'bg-destructive/20 text-destructive',
   };
+
+  // ─── Auto Error Fix ───
+  const handlePreviewError = useCallback(async (error: string) => {
+    if (!autoFixEnabled || isAutoFixing || !session) return;
+    if (error === lastFixedError) return;
+    if (autoFixCountRef.current >= MAX_AUTO_FIXES) {
+      setFixLog(prev => [...prev, `⚠ Max auto-fix attempts (${MAX_AUTO_FIXES}) reached. Manual intervention needed.`]);
+      toast({
+        title: 'Auto-fix limit reached',
+        description: 'Reached max auto-fix attempts. Switch to Edit mode to fix manually.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setLastFixedError(error);
+    setIsAutoFixing(true);
+    autoFixCountRef.current += 1;
+
+    const fixNum = autoFixCountRef.current;
+    setFixLog(prev => [...prev, `🔧 Fix #${fixNum}: Detected error — ${error.slice(0, 120)}…`]);
+
+    const fileList = Object.keys(previewFiles).slice(0, 20).join(', ');
+    const fileContext = Object.entries(previewFiles)
+      .slice(0, 10)
+      .map(([path, content]) => `--- ${path} ---\n${content.slice(0, 3000)}`)
+      .join('\n\n');
+
+    const fixPrompt = `The preview is showing an error. Fix it without changing the app's features, structure, or UI design. Preserve all existing functionality.\n\nError: ${error.slice(0, 500)}\n\nCurrent files: ${fileList}\n\nFile contents:\n${fileContext}\n\nIMPORTANT: Only fix the error. Do NOT remove features, components, or UI elements. Output the corrected file(s) only using fenced code blocks with file path like \`\`\`tsx:src/App.tsx`;
+
+    try {
+      const resp = await fetch(CHAT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: fixPrompt }],
+          projectId,
+        }),
+      });
+
+      if (!resp.ok || !resp.body) {
+        setFixLog(prev => [...prev, `❌ Fix #${fixNum} failed: HTTP ${resp.status}`]);
+        setIsAutoFixing(false);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullResponse = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let idx: number;
+        while ((idx = buffer.indexOf('\n')) !== -1) {
+          let line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          if (line.endsWith('\r')) line = line.slice(0, -1);
+          if (line.startsWith(':') || line.trim() === '') continue;
+          if (!line.startsWith('data: ')) continue;
+          const json = line.slice(6).trim();
+          if (json === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(json);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) fullResponse += content;
+          } catch {
+            buffer = line + '\n' + buffer;
+            break;
+          }
+        }
+      }
+
+      // Apply fixes
+      const fixes = parseFileChanges(fullResponse);
+      const fixedCount = Object.keys(fixes).length;
+      if (fixedCount > 0) {
+        setPreviewFiles(prev => ({ ...prev, ...fixes }));
+        // Persist
+        if (projectId && session?.user?.id) {
+          Object.entries(fixes).forEach(async ([file_path, fileContent]) => {
+            await supabase.from('project_files').upsert(
+              { project_id: projectId, file_path, content: fileContent },
+              { onConflict: 'project_id,file_path' }
+            );
+          });
+        }
+        setFixLog(prev => [...prev, `✅ Fix #${fixNum} applied: ${fixedCount} file(s) updated`]);
+      } else {
+        setFixLog(prev => [...prev, `⚠ Fix #${fixNum}: AI responded but no code changes detected`]);
+      }
+    } catch (e: any) {
+      setFixLog(prev => [...prev, `❌ Fix #${fixNum} error: ${e.message}`]);
+    } finally {
+      setIsAutoFixing(false);
+    }
+  }, [autoFixEnabled, isAutoFixing, session, lastFixedError, previewFiles, projectId, toast]);
 
   return (
     <div className="flex h-[calc(100vh-8rem)] flex-col">
@@ -174,6 +235,28 @@ const DevMode = () => {
         <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${statusColor[projectStatus] ?? ''}`}>
           {projectStatus}
         </Badge>
+        <div className="flex-1" />
+        {/* Auto-fix controls */}
+        <button
+          onClick={() => { setAutoFixEnabled(prev => !prev); autoFixCountRef.current = 0; setLastFixedError(''); }}
+          className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+            autoFixEnabled ? 'bg-primary/10 text-primary' : 'bg-muted/50 text-muted-foreground'
+          }`}
+        >
+          <Wrench className="h-3 w-3" />
+          Auto-fix {autoFixEnabled ? 'ON' : 'OFF'}
+        </button>
+        {isAutoFixing && (
+          <span className="flex items-center gap-1 text-[10px] text-primary">
+            <Loader2 className="h-3 w-3 animate-spin" /> Fixing…
+          </span>
+        )}
+        {autoFixCountRef.current > 0 && !isAutoFixing && (
+          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <AlertTriangle className="h-3 w-3" />
+            {autoFixCountRef.current}/{MAX_AUTO_FIXES} fixes used
+          </span>
+        )}
       </div>
 
       <ResizablePanelGroup direction="horizontal" className="flex-1">
@@ -198,93 +281,61 @@ const DevMode = () => {
 
         <ResizableHandle />
 
-        {/* Editor + Console */}
-        <ResizablePanel defaultSize={45} minSize={25}>
-          <ResizablePanelGroup direction="vertical">
-            {/* Code Editor */}
-            <ResizablePanel defaultSize={70} minSize={30}>
-              <div className="flex h-full flex-col">
-                {selectedFile ? (
-                  <>
-                    <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-                      <File className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-xs font-mono text-muted-foreground">{selectedFile}</span>
-                    </div>
-                    <ScrollArea className="flex-1">
-                      <pre className="p-4 text-xs leading-5">
-                        <code>
-                          {lines.map((line, i) => (
-                            <div key={i} className="flex">
-                              <span className="inline-block w-10 text-right pr-4 text-muted-foreground/50 select-none">
-                                {i + 1}
-                              </span>
-                              <span className="flex-1 whitespace-pre-wrap break-all">{line}</span>
-                            </div>
-                          ))}
-                        </code>
-                      </pre>
-                    </ScrollArea>
-                  </>
-                ) : (
-                  <div className="flex flex-1 items-center justify-center">
-                    <p className="text-sm text-muted-foreground">Select a file to view</p>
-                  </div>
-                )}
-              </div>
-            </ResizablePanel>
-
-            <ResizableHandle />
-
-            {/* Console */}
-            <ResizablePanel defaultSize={30} minSize={15}>
-              <div className="flex h-full flex-col bg-card">
-                <div className="flex items-center justify-between border-b border-border px-4 py-1.5">
-                  <div className="flex items-center gap-2">
-                    <Terminal className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-xs font-medium">Console</span>
-                    <span className="text-[10px] text-muted-foreground">({logs.length})</span>
-                  </div>
-                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setLogs([])}>
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
+        {/* Code Editor */}
+        <ResizablePanel defaultSize={35} minSize={20}>
+          <div className="flex h-full flex-col">
+            {selectedFile ? (
+              <>
+                <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+                  <File className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs font-mono text-muted-foreground">{selectedFile}</span>
                 </div>
                 <ScrollArea className="flex-1">
-                  <div className="p-2 font-mono text-xs space-y-0.5">
-                    {logs.map(log => (
-                      <div key={log.id} className={`flex gap-2 ${levelColor[log.level]}`}>
-                        <span className="text-muted-foreground/40 shrink-0">
-                          {log.timestamp.toLocaleTimeString('en', { hour12: false })}
-                        </span>
-                        <span className="break-all">{log.message}</span>
-                      </div>
+                  <pre className="p-4 text-xs leading-5">
+                    <code>
+                      {lines.map((line, i) => (
+                        <div key={i} className="flex">
+                          <span className="inline-block w-10 text-right pr-4 text-muted-foreground/50 select-none">
+                            {i + 1}
+                          </span>
+                          <span className="flex-1 whitespace-pre-wrap break-all">{line}</span>
+                        </div>
+                      ))}
+                    </code>
+                  </pre>
+                </ScrollArea>
+              </>
+            ) : (
+              <div className="flex flex-1 items-center justify-center">
+                <p className="text-sm text-muted-foreground">Select a file to view</p>
+              </div>
+            )}
+
+            {/* Fix log (compact, replaces console) */}
+            {fixLog.length > 0 && (
+              <div className="border-t border-border bg-card">
+                <div className="flex items-center justify-between px-3 py-1">
+                  <span className="text-[10px] font-semibold text-muted-foreground">Auto-fix Log</span>
+                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setFixLog([])}>
+                    <span className="text-[10px]">✕</span>
+                  </Button>
+                </div>
+                <ScrollArea className="max-h-28">
+                  <div className="px-3 pb-2 font-mono text-[10px] text-muted-foreground space-y-0.5">
+                    {fixLog.map((entry, i) => (
+                      <div key={i}>{entry}</div>
                     ))}
-                    <div ref={consoleEndRef} />
                   </div>
                 </ScrollArea>
-                <form
-                  className="flex items-center gap-2 border-t border-border px-3 py-1.5"
-                  onSubmit={e => { e.preventDefault(); handleCommand(command); setCommand(''); }}
-                >
-                  <span className="text-xs text-muted-foreground">{'>'}</span>
-                  <Input
-                    value={command}
-                    onChange={e => setCommand(e.target.value)}
-                    placeholder="Type a command (/help)"
-                    className="h-7 border-0 bg-transparent px-0 text-xs focus-visible:ring-0 focus-visible:ring-offset-0"
-                  />
-                  <Button variant="ghost" size="icon" type="submit" className="h-6 w-6">
-                    <Send className="h-3 w-3" />
-                  </Button>
-                </form>
               </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            )}
+          </div>
         </ResizablePanel>
 
         <ResizableHandle />
 
-        {/* Preview */}
-        <ResizablePanel defaultSize={40} minSize={20}>
+        {/* Live Preview with Sandpack */}
+        <ResizablePanel defaultSize={50} minSize={25}>
           <div className="flex h-full flex-col">
             {/* Preview toolbar */}
             <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
@@ -301,27 +352,19 @@ const DevMode = () => {
                 </Button>
               ))}
               <div className="flex-1" />
-              <Input
-                value={previewRoute}
-                onChange={e => setPreviewRoute(e.target.value)}
-                className="h-7 w-32 text-xs font-mono"
-                placeholder="/"
-              />
               <span className="text-[10px] text-muted-foreground">{currentViewport.width}px</span>
             </div>
 
-            {/* Preview iframe container */}
+            {/* Preview */}
             <div className="flex flex-1 items-start justify-center overflow-auto bg-muted/30 p-4">
               <div
-                className="bg-background border border-border rounded-lg overflow-hidden shadow-lg transition-all duration-300"
-                style={{ width: `${Math.min(currentViewport.width, 800)}px`, height: '100%' }}
+                className="bg-background border border-border rounded-lg overflow-hidden shadow-lg transition-all duration-300 h-full"
+                style={{ width: `${Math.min(currentViewport.width, 800)}px` }}
               >
-                <iframe
-                  ref={iframeRef}
-                  src={previewUrl}
-                  className="h-full w-full"
-                  title="App Preview"
-                  sandbox="allow-scripts allow-same-origin allow-forms"
+                <SandpackPreview
+                  files={previewFiles}
+                  projectName="preview"
+                  onError={handlePreviewError}
                 />
               </div>
             </div>
