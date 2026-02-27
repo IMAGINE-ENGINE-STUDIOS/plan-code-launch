@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { WizardProvider } from "@/contexts/WizardContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import PageNavigator from "@/components/PageNavigator";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
@@ -52,6 +53,7 @@ function App() {
                 </Route>
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              <PageNavigator />
             </WizardProvider>
           </AuthProvider>
         </BrowserRouter>
