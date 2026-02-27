@@ -24,38 +24,40 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <AuthProvider>
-          <WizardProvider>
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/auth" element={<Auth />} />
-              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-              <Route path="/new-project" element={<ProtectedRoute><NewProject /></ProtectedRoute>} />
-              <Route path="/project/new/plan" element={<ProtectedRoute><PlanReview /></ProtectedRoute>} />
-              <Route path="/import" element={<ProtectedRoute><ImportReport /></ProtectedRoute>} />
-              <Route path="/project/:id" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>}>
-                <Route index element={<Navigate to="plan" replace />} />
-                <Route path="plan" element={<PlanMode />} />
-                <Route path="edit" element={<EditMode />} />
-                <Route path="dev" element={<DevMode />} />
-                <Route path="analysis" element={<AnalysisMode />} />
-                <Route path="publish" element={<PublishPage />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="versions" element={<VersionHistory />} />
-              </Route>
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </WizardProvider>
-        </AuthProvider>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <AuthProvider>
+            <WizardProvider>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/auth" element={<Auth />} />
+                <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                <Route path="/new-project" element={<ProtectedRoute><NewProject /></ProtectedRoute>} />
+                <Route path="/project/new/plan" element={<ProtectedRoute><PlanReview /></ProtectedRoute>} />
+                <Route path="/import" element={<ProtectedRoute><ImportReport /></ProtectedRoute>} />
+                <Route path="/project/:id" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>}>
+                  <Route index element={<Navigate to="plan" replace />} />
+                  <Route path="plan" element={<PlanMode />} />
+                  <Route path="edit" element={<EditMode />} />
+                  <Route path="dev" element={<DevMode />} />
+                  <Route path="analysis" element={<AnalysisMode />} />
+                  <Route path="publish" element={<PublishPage />} />
+                  <Route path="settings" element={<SettingsPage />} />
+                  <Route path="versions" element={<VersionHistory />} />
+                </Route>
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </WizardProvider>
+          </AuthProvider>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+}
 
 export default App;
