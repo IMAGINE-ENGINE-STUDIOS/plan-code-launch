@@ -113,6 +113,38 @@ export type Database = {
           },
         ]
       }
+      project_secrets: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          project_id: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          project_id: string
+          value?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          project_id?: string
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_secrets_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       projects: {
         Row: {
           build_type: string | null

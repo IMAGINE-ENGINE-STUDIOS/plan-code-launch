@@ -15,6 +15,7 @@ import ReactMarkdown from 'react-markdown';
 import SandpackPreview from '@/components/SandpackPreview';
 import CodeViewer from '@/components/CodeViewer';
 import CommandQueue from '@/components/CommandQueue';
+import SecretInput from '@/components/SecretInput';
 import { parseFileChanges, hasFileChanges } from '@/lib/parse-file-changes';
 import { stripCodeBlocks } from '@/lib/strip-code-blocks';
 
@@ -465,6 +466,22 @@ const EditMode = () => {
                   {messages.map((m, i) => {
                     const fileCount = m.role === 'assistant' ? getFileCount(m.content) : 0;
                     const displayContent = m.role === 'assistant' ? stripCodeBlocks(m.content) : m.content;
+
+                    // Parse [NEEDS_API_KEY:KEY:desc] markers from assistant messages
+                    const apiKeyRegex = /\[NEEDS_API_KEY:([^:]+):([^\]]+)\]/g;
+                    const parts: Array<{ type: 'text'; value: string } | { type: 'secret'; key: string; desc: string }> = [];
+                    if (m.role === 'assistant') {
+                      let lastIdx = 0;
+                      let match: RegExpExecArray | null;
+                      while ((match = apiKeyRegex.exec(displayContent)) !== null) {
+                        if (match.index > lastIdx) parts.push({ type: 'text', value: displayContent.slice(lastIdx, match.index) });
+                        parts.push({ type: 'secret', key: match[1], desc: match[2] });
+                        lastIdx = match.index + match[0].length;
+                      }
+                      if (lastIdx < displayContent.length) parts.push({ type: 'text', value: displayContent.slice(lastIdx) });
+                    }
+                    const hasParts = parts.length > 0 && parts.some(p => p.type === 'secret');
+
                     return (
                       <div key={i} className={`rounded-lg p-3 text-sm ${m.role === 'user' ? 'bg-muted/50' : 'bg-primary/5 border border-primary/10'}`}>
                         <div className="mb-1 flex items-center gap-1.5">
@@ -476,7 +493,27 @@ const EditMode = () => {
                           )}
                         </div>
                         {m.role === 'assistant' ? (
-                          <div className="prose prose-sm max-w-none dark:prose-invert"><ReactMarkdown>{displayContent}</ReactMarkdown></div>
+                          hasParts ? (
+                            <div className="prose prose-sm max-w-none dark:prose-invert">
+                              {parts.map((p, j) =>
+                                p.type === 'text' ? (
+                                  <ReactMarkdown key={j}>{p.value}</ReactMarkdown>
+                                ) : (
+                                  <SecretInput
+                                    key={j}
+                                    projectId={projectId!}
+                                    secretKey={p.key}
+                                    description={p.desc}
+                                    onSaved={(key) => {
+                                      sendMessage(`API key ${key} is now configured. Continue building.`);
+                                    }}
+                                  />
+                                )
+                              )}
+                            </div>
+                          ) : (
+                            <div className="prose prose-sm max-w-none dark:prose-invert"><ReactMarkdown>{displayContent}</ReactMarkdown></div>
+                          )
                         ) : (
                           <p className="whitespace-pre-wrap">{m.content}</p>
                         )}

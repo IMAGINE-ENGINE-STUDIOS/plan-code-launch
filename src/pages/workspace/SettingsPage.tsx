@@ -15,23 +15,15 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 
-type Secret = { key: string; value: string };
-
 const SettingsPage = () => {
   const { id } = useParams();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [showValues, setShowValues] = useState<Record<string, boolean>>({});
-
-  // Local secrets state (mock — no backend table for secrets)
-  const [secrets, setSecrets] = useState<Secret[]>([
-    { key: 'SUPABASE_URL', value: 'https://xxx.supabase.co' },
-    { key: 'SUPABASE_ANON_KEY', value: 'eyJhbG...' },
-    { key: 'STRIPE_SECRET_KEY', value: 'sk_test_...' },
-  ]);
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
 
+  // ─── Project info ───
   const { data: project } = useQuery({
     queryKey: ['project', id],
     queryFn: async () => {
@@ -71,9 +63,9 @@ const SettingsPage = () => {
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
-      // Delete related data first
       await supabase.from('chat_messages').delete().eq('project_id', id!);
       await supabase.from('plans').delete().eq('project_id', id!);
+      await (supabase.from('project_secrets' as any) as any).delete().eq('project_id', id!);
       const { error } = await supabase.from('projects').delete().eq('id', id!);
       if (error) throw error;
     },
@@ -87,22 +79,52 @@ const SettingsPage = () => {
     },
   });
 
-  const addSecret = () => {
-    if (!newKey.trim()) return;
-    if (secrets.some(s => s.key === newKey.trim())) {
-      toast({ title: 'Duplicate', description: 'A secret with that key already exists.', variant: 'destructive' });
-      return;
-    }
-    setSecrets(prev => [...prev, { key: newKey.trim(), value: newValue }]);
-    setNewKey('');
-    setNewValue('');
-    toast({ title: 'Added', description: `Secret ${newKey.trim()} added.` });
-  };
+  // ─── Secrets (database-backed) ───
+  const { data: secrets = [], isLoading: secretsLoading } = useQuery({
+    queryKey: ['project-secrets', id],
+    queryFn: async () => {
+      const { data, error } = await (supabase.from('project_secrets' as any) as any)
+        .select('id, key, value, created_at')
+        .eq('project_id', id!);
+      if (error) throw error;
+      return data as Array<{ id: string; key: string; value: string; created_at: string }>;
+    },
+    enabled: !!id,
+  });
 
-  const removeSecret = (key: string) => {
-    setSecrets(prev => prev.filter(s => s.key !== key));
-    toast({ title: 'Removed', description: `Secret ${key} removed.` });
-  };
+  const addSecretMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await (supabase.from('project_secrets' as any) as any).insert({
+        project_id: id!,
+        key: newKey.trim(),
+        value: newValue,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-secrets', id] });
+      toast({ title: 'Added', description: `Secret ${newKey.trim()} added.` });
+      setNewKey('');
+      setNewValue('');
+    },
+    onError: (err: any) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    },
+  });
+
+  const removeSecretMutation = useMutation({
+    mutationFn: async (secretId: string) => {
+      const { error } = await (supabase.from('project_secrets' as any) as any).delete().eq('id', secretId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-secrets', id] });
+      toast({ title: 'Removed', description: 'Secret removed.' });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    },
+  });
 
   return (
     <div className="container max-w-2xl py-8 space-y-8">
@@ -158,27 +180,38 @@ const SettingsPage = () => {
                   <Button variant="outline">Cancel</Button>
                 </DialogClose>
                 <DialogClose asChild>
-                  <Button onClick={addSecret} disabled={!newKey.trim()}>Add Secret</Button>
+                  <Button onClick={() => addSecretMutation.mutate()} disabled={!newKey.trim() || addSecretMutation.isPending}>
+                    {addSecretMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Add Secret
+                  </Button>
                 </DialogClose>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
         <div className="space-y-2">
-          {secrets.map(secret => (
-            <div key={secret.key} className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2">
-              <span className="text-sm font-mono font-medium flex-1">{secret.key}</span>
-              <span className="text-sm font-mono text-muted-foreground flex-1 truncate">
-                {showValues[secret.key] ? secret.value : '••••••••••'}
-              </span>
-              <button onClick={() => setShowValues(v => ({ ...v, [secret.key]: !v[secret.key] }))} className="text-muted-foreground hover:text-foreground transition-colors">
-                {showValues[secret.key] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              </button>
-              <button onClick={() => removeSecret(secret.key)} className="text-muted-foreground hover:text-destructive transition-colors">
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+          {secretsLoading ? (
+            <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading secrets…
             </div>
-          ))}
+          ) : secrets.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">No environment variables configured.</p>
+          ) : (
+            secrets.map(secret => (
+              <div key={secret.id} className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2">
+                <span className="text-sm font-mono font-medium flex-1">{secret.key}</span>
+                <span className="text-sm font-mono text-muted-foreground flex-1 truncate">
+                  {showValues[secret.id] ? secret.value : '••••••••••'}
+                </span>
+                <button onClick={() => setShowValues(v => ({ ...v, [secret.id]: !v[secret.id] }))} className="text-muted-foreground hover:text-foreground transition-colors">
+                  {showValues[secret.id] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+                <button onClick={() => removeSecretMutation.mutate(secret.id)} className="text-muted-foreground hover:text-destructive transition-colors">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

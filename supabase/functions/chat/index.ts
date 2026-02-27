@@ -52,6 +52,17 @@ serve(async (req) => {
       });
     }
 
+    // Load project secrets (key names only) using service role
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    const { data: secrets } = await serviceClient
+      .from("project_secrets")
+      .select("key")
+      .eq("project_id", projectId);
+    const configuredKeys = (secrets || []).map((s: any) => s.key);
+
     // Load existing project files for context
     let fileListContext = "";
     const { data: projectFiles } = await supabase
@@ -111,6 +122,15 @@ ROBUST NEW FEATURES — CRITICAL:
 - New features must be self-contained and not break existing functionality.
 - Include realistic mock data, proper TypeScript types, and all necessary routing.
 - Each new feature should be production-ready on delivery, not a skeleton.
+
+API KEY HANDLING — CRITICAL:
+- When a feature requires an external API key or token (e.g. Mapbox, Stripe, OpenAI, Google Maps, etc.), do NOT hardcode a placeholder value or fake key.
+- Instead, output the special marker: [NEEDS_API_KEY:KEY_NAME:Description of where to get the key]
+- Example: [NEEDS_API_KEY:MAPBOX_TOKEN:Get your token at mapbox.com/account]
+- The frontend will render a secure input widget for the user to enter their key.
+- After the user provides the key, you will receive a follow-up message confirming it's configured. Then continue building with the key available.
+- Currently configured API keys for this project: ${configuredKeys.length > 0 ? configuredKeys.join(", ") : "None"}
+- If a needed key is already in the configured list above, proceed to use it directly without requesting it again.
 
 CODE QUALITY RULES:
 - Use \`className\` not \`class\`
