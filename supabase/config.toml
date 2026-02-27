@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.import-github-repo]
 verify_jwt = false
+
+[functions.test-analyze]
+verify_jwt = false

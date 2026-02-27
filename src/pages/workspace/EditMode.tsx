@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Send, Trash2, Loader2, Sparkles, CheckCircle2,
   Maximize2, Minimize2, Monitor, Tablet, Smartphone, Terminal, X, MousePointer2, AlertTriangle, Wrench,
+  Camera, FlaskConical, Check, XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,12 +13,16 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import ReactMarkdown from 'react-markdown';
+import html2canvas from 'html2canvas';
 import SandpackPreview from '@/components/SandpackPreview';
 import CodeViewer from '@/components/CodeViewer';
 import CommandQueue from '@/components/CommandQueue';
 import SecretInput from '@/components/SecretInput';
 import { parseFileChanges, hasFileChanges } from '@/lib/parse-file-changes';
 import { stripCodeBlocks } from '@/lib/strip-code-blocks';
+
+const TEST_ANALYZE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/test-analyze`;
+const TEST_KEYWORDS = /\b(test|screenshot|check|analyze|analyse|review|inspect)\b/i;
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 type DbMsg = { id: string; role: string; content: string; created_at: string };
@@ -59,9 +64,12 @@ const EditMode = () => {
   const [autoFixEnabled, setAutoFixEnabled] = useState(true);
   const [lastFixedError, setLastFixedError] = useState('');
   const [isAutoFixing, setIsAutoFixing] = useState(false);
+  const [isTestAnalyzing, setIsTestAnalyzing] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<Record<number, Record<string, string>>>({});
   const autoFixCountRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<(text: string) => Promise<void>>();
+  const previewContainerRef = useRef<HTMLDivElement>(null);
 
   // Load project data
   useEffect(() => {
@@ -378,8 +386,156 @@ const EditMode = () => {
   const handleSubmitWithReset = (text: string) => {
     autoFixCountRef.current = 0;
     setLastFixedError('');
+    // Check if it's a test/analyze request
+    if (TEST_KEYWORDS.test(text) && Object.keys(previewFiles).length > 0) {
+      captureAndAnalyze(text);
+      return;
+    }
     handleSubmit(text);
   };
+
+  // ─── Screenshot Capture ───
+  const captureScreenshot = useCallback(async (): Promise<string | null> => {
+    const container = previewContainerRef.current;
+    if (!container) {
+      toast({ title: 'Error', description: 'Preview not available for capture', variant: 'destructive' });
+      return null;
+    }
+    try {
+      const canvas = await html2canvas(container, {
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#0a0a0f',
+        scale: 1,
+      });
+      return canvas.toDataURL('image/png');
+    } catch (e: any) {
+      console.error('Screenshot capture failed:', e);
+      toast({ title: 'Screenshot failed', description: e.message, variant: 'destructive' });
+      return null;
+    }
+  }, [toast]);
+
+  // ─── Test & Analyze ───
+  const captureAndAnalyze = useCallback(async (userRequest?: string) => {
+    if (isTestAnalyzing || !session) return;
+    setIsTestAnalyzing(true);
+
+    const screenshot = await captureScreenshot();
+    if (!screenshot) {
+      setIsTestAnalyzing(false);
+      return;
+    }
+
+    // Add a user message for the test request
+    const testLabel = userRequest || 'Analyze the current preview for issues';
+    const userMsg: Msg = { role: 'user', content: `📸 ${testLabel}` };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    await saveMessage('user', userMsg.content);
+
+    let assistantSoFar = '';
+    const upsertAssistant = (chunk: string) => {
+      assistantSoFar += chunk;
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant') {
+          return prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: assistantSoFar } : m));
+        }
+        return [...prev, { role: 'assistant', content: assistantSoFar }];
+      });
+    };
+
+    try {
+      const resp = await fetch(TEST_ANALYZE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          screenshot,
+          projectFiles: previewFiles,
+          userRequest: userRequest || '',
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'Analysis failed' }));
+        toast({ title: 'Analysis Error', description: err.error || `Error ${resp.status}`, variant: 'destructive' });
+        setIsTestAnalyzing(false);
+        return;
+      }
+
+      if (!resp.body) throw new Error('No response body');
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let idx: number;
+        while ((idx = buffer.indexOf('\n')) !== -1) {
+          let line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          if (line.endsWith('\r')) line = line.slice(0, -1);
+          if (line.startsWith(':') || line.trim() === '') continue;
+          if (!line.startsWith('data: ')) continue;
+          const json = line.slice(6).trim();
+          if (json === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(json);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) upsertAssistant(content);
+          } catch {
+            buffer = line + '\n' + buffer;
+            break;
+          }
+        }
+      }
+
+      await saveMessage('assistant', assistantSoFar);
+
+      // Check if there are proposed file changes — store for approval
+      const proposedFiles = parseFileChanges(assistantSoFar);
+      if (Object.keys(proposedFiles).length > 0) {
+        setMessages(prev => {
+          const msgIndex = prev.length - 1;
+          setPendingApprovals(pa => ({ ...pa, [msgIndex]: proposedFiles }));
+          return prev;
+        });
+      }
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally {
+      setIsTestAnalyzing(false);
+    }
+  }, [isTestAnalyzing, session, captureScreenshot, previewFiles, saveMessage, toast]);
+
+  const approveChanges = useCallback((msgIndex: number) => {
+    const files = pendingApprovals[msgIndex];
+    if (!files) return;
+    setPreviewFiles(prev => ({ ...prev, ...files }));
+    // Persist
+    if (projectId && session?.user?.id) {
+      Object.entries(files).forEach(async ([file_path, fileContent]) => {
+        await supabase.from('project_files').upsert(
+          { project_id: projectId, file_path, content: fileContent },
+          { onConflict: 'project_id,file_path' }
+        );
+      });
+    }
+    setPendingApprovals(prev => { const next = { ...prev }; delete next[msgIndex]; return next; });
+    toast({ title: 'Changes applied', description: `${Object.keys(files).length} file(s) updated` });
+  }, [pendingApprovals, projectId, session, toast]);
+
+  const dismissChanges = useCallback((msgIndex: number) => {
+    setPendingApprovals(prev => { const next = { ...prev }; delete next[msgIndex]; return next; });
+  }, []);
 
   const vp = VIEWPORTS[activeViewport];
 
@@ -486,9 +642,14 @@ const EditMode = () => {
                       <div key={i} className={`rounded-lg p-3 text-sm ${m.role === 'user' ? 'bg-muted/50' : 'bg-primary/5 border border-primary/10'}`}>
                         <div className="mb-1 flex items-center gap-1.5">
                           <p className="text-xs font-medium text-muted-foreground">{m.role === 'user' ? 'You' : 'AI'}</p>
-                          {fileCount > 0 && (
+                          {fileCount > 0 && !pendingApprovals[i] && (
                             <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                               <CheckCircle2 className="h-3 w-3" />{fileCount} file{fileCount > 1 ? 's' : ''} applied
+                            </span>
+                          )}
+                          {pendingApprovals[i] && (
+                            <span className="flex items-center gap-1 rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-medium text-destructive">
+                              <FlaskConical className="h-3 w-3" />{Object.keys(pendingApprovals[i]).length} file(s) proposed
                             </span>
                           )}
                         </div>
@@ -517,12 +678,34 @@ const EditMode = () => {
                         ) : (
                           <p className="whitespace-pre-wrap">{m.content}</p>
                         )}
+                        {/* Approval buttons for test analysis */}
+                        {pendingApprovals[i] && (
+                          <div className="mt-3 flex items-center gap-2 border-t border-border/50 pt-3">
+                            <Button
+                              size="sm"
+                              className="h-8 gap-1.5 text-xs"
+                              onClick={() => approveChanges(i)}
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                              Approve & Apply Changes
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 gap-1.5 text-xs text-muted-foreground"
+                              onClick={() => dismissChanges(i)}
+                            >
+                              <XCircle className="h-3.5 w-3.5" />
+                              Dismiss
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
-                  {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && (
+                  {(isStreaming || isTestAnalyzing) && messages[messages.length - 1]?.role !== 'assistant' && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />{isAutoFixing ? 'Auto-fixing error…' : 'Building...'}
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />{isAutoFixing ? 'Auto-fixing error…' : isTestAnalyzing ? '📸 Analyzing preview…' : 'Building...'}
                     </div>
                   )}
                   <div ref={scrollRef} />
@@ -603,6 +786,16 @@ const EditMode = () => {
                 >
                   <MousePointer2 className="h-3.5 w-3.5" />
                 </Button>
+                <Button
+                  variant={isTestAnalyzing ? 'default' : 'ghost'}
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => captureAndAnalyze()}
+                  disabled={isTestAnalyzing || Object.keys(previewFiles).length === 0}
+                  title="Test & Analyze preview"
+                >
+                  {isTestAnalyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
+                </Button>
                 <Button variant={showConsole ? 'secondary' : 'ghost'} size="icon" className="h-7 w-7" onClick={() => setShowConsole(!showConsole)} title="Console">
                   <Terminal className="h-3.5 w-3.5" />
                 </Button>
@@ -626,8 +819,8 @@ const EditMode = () => {
             )}
 
             <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="flex flex-1 items-start justify-center overflow-hidden bg-muted/20 p-2">
-                <div className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
+            <div className="flex flex-1 items-start justify-center overflow-hidden bg-muted/20 p-2">
+                <div ref={previewContainerRef} className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
                   {project ? (
                     <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} />
                   ) : (
