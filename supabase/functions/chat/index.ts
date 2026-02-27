@@ -40,7 +40,7 @@ serve(async (req) => {
     // Verify user owns the project
     const { data: project, error: projectError } = await supabase
       .from("projects")
-      .select("name, description, stack, day_one_features, status")
+      .select("name, description, stack, day_one_features, status, source_repo")
       .eq("id", projectId)
       .eq("user_id", userId)
       .single();
@@ -50,6 +50,18 @@ serve(async (req) => {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Load existing project files for context
+    let fileListContext = "";
+    const { data: projectFiles } = await supabase
+      .from("project_files")
+      .select("file_path")
+      .eq("project_id", projectId);
+    
+    if (projectFiles && projectFiles.length > 0) {
+      const paths = projectFiles.map((f: any) => f.file_path).join("\n  ");
+      fileListContext = `\n\nEXISTING PROJECT FILES:\n  ${paths}\n\nThis is an imported project. When modifying code, maintain existing patterns, component naming, and file structure. Reference existing files by their exact paths. Only output files you are creating or modifying.`;
     }
 
     const systemPrompt = `You are a world-class React engineer. You build beautiful, production-quality UIs for "${project.name}".
@@ -107,6 +119,7 @@ COMPONENT PATTERNS:
 - Auth: centered card, input fields with labels, submit button, link to toggle login/signup
 
 For multi-page apps, set up BrowserRouter in App.tsx with Routes.
+${fileListContext}
 `;
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");

@@ -12,7 +12,7 @@ import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import NewProject from "./pages/NewProject";
 import PlanReview from "./pages/PlanReview";
-import ImportReport from "./pages/ImportReport";
+import ImportProject from "./pages/ImportProject";
 import ProjectWorkspace from "./pages/workspace/ProjectWorkspace";
 import PlanMode from "./pages/workspace/PlanMode";
 import EditMode from "./pages/workspace/EditMode";
@@ -40,7 +40,7 @@ function App() {
                 <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                 <Route path="/new-project" element={<ProtectedRoute><NewProject /></ProtectedRoute>} />
                 <Route path="/project/new/plan" element={<ProtectedRoute><PlanReview /></ProtectedRoute>} />
-                <Route path="/import" element={<ProtectedRoute><ImportReport /></ProtectedRoute>} />
+                <Route path="/import" element={<ProtectedRoute><ImportProject /></ProtectedRoute>} />
                 <Route path="/project/:id" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>}>
                   <Route index element={<Navigate to="dev" replace />} />
                   <Route path="plan" element={<PlanMode />} />
