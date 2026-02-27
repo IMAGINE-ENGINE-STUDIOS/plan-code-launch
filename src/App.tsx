@@ -41,7 +41,7 @@ function App() {
                 <Route path="/project/new/plan" element={<ProtectedRoute><PlanReview /></ProtectedRoute>} />
                 <Route path="/import" element={<ProtectedRoute><ImportReport /></ProtectedRoute>} />
                 <Route path="/project/:id" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>}>
-                  <Route index element={<Navigate to="plan" replace />} />
+                  <Route index element={<Navigate to="dev" replace />} />
                   <Route path="plan" element={<PlanMode />} />
                   <Route path="edit" element={<EditMode />} />
                   <Route path="dev" element={<DevMode />} />
