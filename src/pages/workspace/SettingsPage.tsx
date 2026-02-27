@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Settings, Key, Plus, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -35,11 +35,13 @@ const SettingsPage = () => {
   const [initialized, setInitialized] = useState(false);
 
   // Sync form when project loads
-  if (project && !initialized) {
-    setName(project.name);
-    setDescription(project.description ?? '');
-    setInitialized(true);
-  }
+  useEffect(() => {
+    if (project && !initialized) {
+      setName(project.name);
+      setDescription(project.description ?? '');
+      setInitialized(true);
+    }
+  }, [project, initialized]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
