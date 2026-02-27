@@ -1,10 +1,12 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Layers, Plus } from 'lucide-react';
+import { Layers, Plus, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Navbar = () => {
   const location = useLocation();
   const isLanding = location.pathname === '/';
+  const { user, signOut } = useAuth();
 
   return (
     <nav className="sticky top-0 z-50 glass">
@@ -16,7 +18,7 @@ const Navbar = () => {
           BuildStack
         </Link>
         <div className="flex items-center gap-3">
-          {isLanding ? (
+          {!user ? (
             <>
               <Button variant="ghost" size="sm" asChild>
                 <Link to="/auth">Sign in</Link>
@@ -32,6 +34,9 @@ const Navbar = () => {
               </Button>
               <Button size="sm" asChild>
                 <Link to="/new-project"><Plus className="mr-1 h-4 w-4" />New Project</Link>
+              </Button>
+              <Button variant="ghost" size="sm" onClick={signOut}>
+                <LogOut className="h-4 w-4" />
               </Button>
             </>
           )}
