@@ -1,44 +1,72 @@
 
 
-## Plan: Secure API Key Input in Chat + Persisted Project Secrets
+## Plan: AI Screenshot Testing & Analysis Feature
 
-### Problem
-- Settings page secrets are mock (not saved to database)
-- No way for the AI chat to ask users for API keys inline
-- Projects don't have persisted environment variables
+### Overview
+Add a testing mode where the AI can capture screenshots of the live preview, analyze visual/functional issues using a vision-capable model, and propose code fixes that the user can approve with a single click.
 
-### Changes
+### Architecture
 
-**1. Database: Create `project_secrets` table**
-- Columns: `id`, `project_id` (FK), `key` (text), `value` (text, encrypted at rest), `created_at`
-- RLS: only project owner can CRUD
-- Unique constraint on `(project_id, key)`
+```text
+User clicks "Test App" or asks "test this"
+         │
+         ▼
+  Capture screenshot of Sandpack preview (html2canvas)
+         │
+         ▼
+  Send base64 image + project context to new edge function
+         │
+         ▼
+  Edge function calls Gemini 2.5 Pro (vision model)
+         │
+         ▼
+  AI returns analysis + proposed code changes
+         │
+         ▼
+  Render analysis in chat with [Approve Changes] button
+         │
+         ▼
+  On approve → apply file changes to preview
+```
 
-**2. Edge function: `supabase/functions/chat/index.ts`**
-- Load project secrets from `project_secrets` table and inject available key names into the system prompt
-- Add system prompt section: `API KEY HANDLING` — when a feature needs an API key (e.g. Mapbox, Stripe, OpenAI), the AI should output a special marker `[NEEDS_API_KEY:KEY_NAME:description]` instead of hardcoding a placeholder
-- The marker tells the frontend to render a secure input widget
+### Implementation Steps
 
-**3. Frontend: `src/components/SecretInput.tsx`** (new)
-- A masked input component rendered inline in chat when `[NEEDS_API_KEY:...]` is detected
-- User types the key, clicks Save → inserts into `project_secrets` table
-- Once saved, the component shows a green checkmark with the key name
+**1. Install html2canvas dependency**
+Add `html2canvas` package to capture the Sandpack preview iframe area as a base64 image.
 
-**4. Frontend: `src/pages/workspace/EditMode.tsx`**
-- Parse assistant messages for `[NEEDS_API_KEY:KEY_NAME:description]` markers
-- Render `SecretInput` inline instead of the raw marker text
-- After user saves a key, auto-send a follow-up message: "API key KEY_NAME is now configured. Continue building."
+**2. Create edge function `supabase/functions/test-analyze/index.ts`**
+- Accepts `{ screenshot: string (base64), projectFiles: string[], userRequest: string, projectId: string }`
+- Sends the screenshot as an image part to `google/gemini-2.5-pro` (vision-capable) via the Lovable AI gateway
+- System prompt instructs the model to: analyze the UI screenshot, identify visual bugs / layout issues / missing elements, and output proposed code fixes in the standard ```` ```tsx:path``` ```` format
+- Returns the analysis text with embedded code blocks
+- Handles 429/402 errors
 
-**5. Frontend: `src/pages/workspace/SettingsPage.tsx`**
-- Replace mock secrets array with real data from `project_secrets` table
-- Add/remove secrets persists to database
-- Values shown masked by default, toggle to reveal
+**3. Modify `src/pages/workspace/EditMode.tsx`**
+- Add a `Camera` icon button to the preview toolbar for manual screenshot capture
+- Add a `captureScreenshot()` function that uses `html2canvas` on the preview container div and returns base64
+- Detect when user messages contain keywords like "test", "screenshot", "check", "analyze" — automatically capture a screenshot and attach it to the request
+- After AI analysis response arrives, parse it for file changes and render an **"Approve Changes"** button below the analysis
+- The approve button calls `applyFilesToPreview()` with the proposed changes
+- If not approved, changes are discarded (just text in chat)
+
+**4. Add approval UI component inline in chat**
+- When an assistant message is flagged as a "test analysis" (detected by a marker or by the presence of the test-analyze call), render:
+  - The analysis text (markdown)
+  - A highlighted "Approve & Apply Changes" button
+  - A "Dismiss" button
+- On approve: apply file changes, show success toast
+- On dismiss: collapse the proposal
 
 ### Technical Details
 
-- `project_secrets` table uses RLS via project ownership (same pattern as `project_files`)
-- Secret values stored as plain text in the DB column (Supabase encrypts at rest)
-- The chat edge function reads secrets using service role to list key names only (not values) for the system prompt
-- The AI marker format: `[NEEDS_API_KEY:MAPBOX_TOKEN:Get your token at mapbox.com/account]`
-- Frontend regex to detect markers: `/\[NEEDS_API_KEY:([^:]+):([^\]]+)\]/g`
+- **Vision model**: `google/gemini-2.5-pro` supports image+text input via the OpenAI-compatible API format (image_url with base64 data URI in the user message content array)
+- **Screenshot target**: The div wrapping the SandpackPreview component (not the iframe directly — html2canvas captures the rendered visual area)
+- **Message format for vision**: `{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,..." } }, { type: "text", text: "Analyze this screenshot..." }] }`
+- **Approval state**: Tracked per-message with a `pendingApproval` map keyed by message index, storing the parsed file changes until approved or dismissed
+- **Edge function config**: `verify_jwt = false` in config.toml, auth validated in code like existing `chat` function
+
+### Files Changed
+- `package.json` — add `html2canvas`
+- `supabase/functions/test-analyze/index.ts` — new edge function
+- `src/pages/workspace/EditMode.tsx` — screenshot capture, test detection, approval UI
 
