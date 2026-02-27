@@ -52,6 +52,36 @@ const BASE_FILES: Record<string, string> = {
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    let selectActive = false;
+    let hoverEl = null;
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'toggle-select-mode') selectActive = e.data.active;
+    });
+    document.addEventListener('mouseover', (e) => {
+      if (!selectActive) return;
+      if (hoverEl) hoverEl.style.outline = '';
+      hoverEl = e.target;
+      hoverEl.style.outline = '2px solid #6366f1';
+    });
+    document.addEventListener('mouseout', (e) => {
+      if (hoverEl) { hoverEl.style.outline = ''; hoverEl = null; }
+    });
+    document.addEventListener('click', (e) => {
+      if (!selectActive) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const el = e.target;
+      window.parent.postMessage({
+        type: 'element-selected',
+        tag: el.tagName.toLowerCase(),
+        text: (el.textContent || '').trim().slice(0, 80),
+        classes: el.className || '',
+      }, '*');
+      if (hoverEl) { hoverEl.style.outline = ''; hoverEl = null; }
+      selectActive = false;
+    }, true);
+  </script>
 </body>
 </html>`,
   '/src/index.tsx': `import React from 'react';
