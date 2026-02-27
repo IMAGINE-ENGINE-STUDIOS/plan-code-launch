@@ -32,12 +32,13 @@ const SettingsPage = () => {
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [initialized, setInitialized] = useState(false);
 
   // Sync form when project loads
-  const initialized = project && name === '' && description === '';
-  if (initialized) {
+  if (project && !initialized) {
     setName(project.name);
-    setDescription(project.description);
+    setDescription(project.description ?? '');
+    setInitialized(true);
   }
 
   const updateMutation = useMutation({
