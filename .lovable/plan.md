@@ -1,63 +1,38 @@
 
 
-## Plan: Import and Continue Building Lovable Projects
+## Plan: Harden AI System Prompt for Robust, Complete Builds
 
 ### Problem
-Users can't load existing Lovable projects (from GitHub) into the workspace to continue building them with AI chat. The current system only works with files generated from scratch via AI messages.
+The AI sometimes generates placeholder buttons, incomplete integrations, and unnecessarily modifies existing working UI when building new features.
 
 ### Approach
-Add a GitHub import flow that fetches a Lovable project's source files, stores them persistently, and loads them into the Sandpack preview so the AI can iterate on top of existing code.
+Update the system prompt in `supabase/functions/chat/index.ts` to add three new directive sections that enforce MVP-complete builds and protect existing code.
 
-### 1. Database: Add `project_files` table
-- New table `project_files` with columns: `id`, `project_id`, `file_path`, `content`, `created_at`, `updated_at`
-- RLS: users can only access files for projects they own
-- This stores the current file state for each project (both imported and AI-generated)
-- Migration also adds `source_repo` (nullable text) column to `projects` for tracking import origin
+### Changes
 
-### 2. Edge function: `import-github-repo`
-- Accepts a GitHub repo URL (e.g. `https://github.com/user/repo`)
-- Uses GitHub API (no auth needed for public repos) to fetch the file tree recursively
-- Filters to relevant source files: `.tsx`, `.ts`, `.css`, `.html`, `.json` in `src/`, `public/`
-- Fetches content for each file (up to ~50 files, skip large files >100KB)
-- Returns the file map as `Record<string, string>`
+**File: `supabase/functions/chat/index.ts`** — Add the following rules to the system prompt (after the existing `COMPLETENESS — CRITICAL` section):
 
-### 3. New Import page: `src/pages/ImportProject.tsx`
-- Replace the mock `ImportReport.tsx` with a real import flow
-- Input field for GitHub repo URL (validates format)
-- "Scan Repository" button calls the edge function
-- Shows file tree preview with file count and size
-- "Import & Start Building" button creates a new project, saves files to `project_files`, and navigates to Edit mode
+1. **NO PLACEHOLDER UI** block:
+   - Every button, link, form, and interactive element must have a working handler
+   - If a button can't do anything meaningful yet, don't render it
+   - No `onClick={() => {}}` or `// TODO` handlers — wire it up or remove it
+   - If integrating a third-party library (e.g. Cesium, Mapbox, Three.js), build a fully functional MVP — import the library, initialize it, render real output
 
-### 4. Update EditMode to load persisted files
-- On mount, load files from `project_files` table (in addition to replaying chat messages)
-- Imported files become the base layer; AI-generated files overlay on top
-- After each AI response, upsert changed files to `project_files` so the file state is always persisted
-- This means refreshing the page preserves the full project state (not just chat replay)
+2. **PROTECT EXISTING CODE** block:
+   - Only modify files the user explicitly asks to change or that need updating to support the new feature
+   - Never redesign existing layouts, navigation, or styling unless asked
+   - Never remove or rename existing components, routes, or features
+   - If adding a new tool/page, add it alongside existing ones — don't restructure
+   - If existing code works and wasn't mentioned, don't touch it
 
-### 5. Update SandpackPreview for compatibility
-- Map Lovable project file paths to Sandpack-compatible paths
-- Handle common Lovable patterns: `@/` import aliases → relative paths
-- Add `shadcn/ui` component stubs or CDN links for common dependencies
-- Add more dependencies to Sandpack's `customSetup` (recharts, date-fns, etc.)
-
-### 6. Update AI system prompt for imported projects
-- When a project has imported files, include the file list in the system prompt context
-- Tell the AI which files exist so it can modify them correctly instead of creating from scratch
-- Add instruction: "This is an imported project. Maintain existing patterns, component naming, and file structure."
+3. **ROBUST NEW FEATURES** block:
+   - When building a new tool or feature on an existing project, build it completely — full CRUD, all states (loading, empty, error, success), working data flow
+   - New features must be self-contained and not break existing functionality
+   - Include realistic mock data, proper TypeScript types, and all necessary routing
+   - Each new feature should be production-ready on delivery, not a skeleton
 
 ### Technical Details
-
-**GitHub API fetching** (edge function):
-- `GET https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1` for file tree
-- `GET https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}` for file contents
-- Rate limit: 60 req/hr unauthenticated (sufficient for import)
-
-**File path mapping** for Sandpack compatibility:
-- `src/components/ui/button.tsx` → `/src/components/ui/button.tsx`
-- `@/components/X` imports → `./components/X` (rewrite in content)
-- `@/lib/utils` → `./lib/utils`
-
-**Sandpack dependency expansion**:
-- Add common Lovable deps: `class-variance-authority`, `clsx`, `tailwind-merge`, `cmdk`, `date-fns`, `recharts`, `react-day-picker`
-- Include a `cn()` utility stub automatically
+- Single file edit to `supabase/functions/chat/index.ts`, lines ~88-94 area (appending after existing completeness rules)
+- No database changes, no new files, no UI changes
+- Edge function will be redeployed automatically
 
