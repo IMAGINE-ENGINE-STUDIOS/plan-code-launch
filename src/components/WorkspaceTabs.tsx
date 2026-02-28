@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
-import { Sparkles, Pencil, Code2, BarChart3, Rocket, Settings, History } from 'lucide-react';
+import { Sparkles, Pencil, Code2, BarChart3, Rocket, Settings, History, MessageCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const tabs = [
   { to: 'plan', label: 'Plan', icon: Sparkles },
   { to: 'edit', label: 'Edit', icon: Pencil },
+  { to: 'chat', label: 'Chat', icon: MessageCircle },
   { to: 'dev', label: 'Dev', icon: Code2 },
   { to: 'analysis', label: 'Analysis', icon: BarChart3 },
   { to: 'publish', label: 'Publish', icon: Rocket },
