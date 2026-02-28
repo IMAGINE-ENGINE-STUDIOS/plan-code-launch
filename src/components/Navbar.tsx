@@ -1,12 +1,12 @@
-import { Link, useLocation } from 'react-router-dom';
-import { Plus, LogOut, DollarSign } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { useAuth } from '@/contexts/AuthContext';
-import logo from '@/assets/logo.png';
+import { Link, useLocation } from "react-router-dom";
+import { Plus, LogOut, DollarSign } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
+import logo from "@/assets/logo.png";
 
 const Navbar = () => {
   const location = useLocation();
-  const isLanding = location.pathname === '/';
+  const isLanding = location.pathname === "/";
   const { user, signOut } = useAuth();
 
   return (
@@ -14,7 +14,7 @@ const Navbar = () => {
       <div className="container flex h-14 items-center justify-between">
         <Link to="/" className="flex items-center gap-2 font-display text-lg font-bold">
           <img src={logo} alt="Imagine Engine" className="h-8 w-8 rounded-lg" />
-          Imagine Engine
+          IMAGINE ENGINE
         </Link>
         <div className="flex items-center gap-3">
           {!user ? (
@@ -32,10 +32,16 @@ const Navbar = () => {
                 <Link to="/dashboard">Dashboard</Link>
               </Button>
               <Button variant="ghost" size="sm" asChild>
-                <Link to="/costs"><DollarSign className="mr-1 h-4 w-4" />Costs</Link>
+                <Link to="/costs">
+                  <DollarSign className="mr-1 h-4 w-4" />
+                  Costs
+                </Link>
               </Button>
               <Button size="sm" asChild>
-                <Link to="/new-project"><Plus className="mr-1 h-4 w-4" />New Project</Link>
+                <Link to="/new-project">
+                  <Plus className="mr-1 h-4 w-4" />
+                  New Project
+                </Link>
               </Button>
               <Button variant="ghost" size="sm" onClick={signOut}>
                 <LogOut className="h-4 w-4" />
