@@ -14,7 +14,6 @@ import NewProject from "./pages/NewProject";
 import PlanReview from "./pages/PlanReview";
 import ImportProject from "./pages/ImportProject";
 import ProjectWorkspace from "./pages/workspace/ProjectWorkspace";
-import PlanMode from "./pages/workspace/PlanMode";
 import EditMode from "./pages/workspace/EditMode";
 import DevMode from "./pages/workspace/DevMode";
 import AnalysisMode from "./pages/workspace/AnalysisMode";
@@ -46,7 +45,6 @@ function App() {
                 <Route path="/costs" element={<ProtectedRoute><CostsPage /></ProtectedRoute>} />
                 <Route path="/project/:id" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>}>
                   <Route index element={<Navigate to="dev" replace />} />
-                  <Route path="plan" element={<PlanMode />} />
                   <Route path="edit" element={<EditMode />} />
                   <Route path="chat" element={<ChatMode />} />
                   <Route path="dev" element={<DevMode />} />
