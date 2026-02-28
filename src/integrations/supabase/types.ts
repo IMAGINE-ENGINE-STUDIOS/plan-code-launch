@@ -145,16 +145,57 @@ export type Database = {
           },
         ]
       }
+      project_versions: {
+        Row: {
+          created_at: string
+          id: string
+          note: string
+          project_id: string
+          snapshot: Json
+          user_id: string
+          version_label: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          note?: string
+          project_id: string
+          snapshot?: Json
+          user_id: string
+          version_label: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          note?: string
+          project_id?: string
+          snapshot?: Json
+          user_id?: string
+          version_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_versions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       projects: {
         Row: {
+          ai_model: string | null
           build_type: string | null
           code_source: string | null
           created_at: string
+          custom_domain: string | null
           day_one_features: string[] | null
           description: string
           id: string
           name: string
           priorities: string[] | null
+          published_url: string | null
           source_repo: string | null
           stack: string[] | null
           status: string
@@ -162,14 +203,17 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          ai_model?: string | null
           build_type?: string | null
           code_source?: string | null
           created_at?: string
+          custom_domain?: string | null
           day_one_features?: string[] | null
           description?: string
           id?: string
           name: string
           priorities?: string[] | null
+          published_url?: string | null
           source_repo?: string | null
           stack?: string[] | null
           status?: string
@@ -177,14 +221,17 @@ export type Database = {
           user_id: string
         }
         Update: {
+          ai_model?: string | null
           build_type?: string | null
           code_source?: string | null
           created_at?: string
+          custom_domain?: string | null
           day_one_features?: string[] | null
           description?: string
           id?: string
           name?: string
           priorities?: string[] | null
+          published_url?: string | null
           source_repo?: string | null
           stack?: string[] | null
           status?: string
