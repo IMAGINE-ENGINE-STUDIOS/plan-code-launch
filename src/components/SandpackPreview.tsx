@@ -437,6 +437,10 @@ export default function SandpackPreview({ files, projectName, onError, extraDepe
           'input-otp': '^1.4.2',
           'react-day-picker': '^8.10.1',
           'react-resizable-panels': '^2.1.9',
+          // 3D / WebGL
+          'three': '^0.170.0',
+          '@react-three/fiber': '^8.18.0',
+          '@react-three/drei': '^9.122.0',
           ...(extraDependencies || {}),
         },
         entry: '/src/index.tsx',
