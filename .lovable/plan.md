@@ -1,100 +1,96 @@
 
 
-## Comprehensive Audit: What's Incomplete & Plan to Fix
+## Gap Analysis: BuildStack vs Lovable — and Plan to Go Fully Independent
 
-### Issues Found Across All Tabs
+### What Lovable Has That BuildStack Doesn't
 
-**1. Analysis Tab — Entirely Mock Data (CRITICAL)**
-- Uses `mockAnalysis` from `mock-data.ts` — hardcoded static findings
-- "Re-scan" button just shows the same mock data after a fake 2s delay
-- No real analysis of project files — should scan actual `project_files` content via AI
-- "Dismiss" only removes from local state, not persisted
+**CRITICAL GAPS (Core Platform Features)**
 
-**2. Version History Tab — Entirely Mock Data (CRITICAL)**
-- Uses `mockVersions` from `mock-data.ts` — 4 hardcoded fake versions
-- "Rollback" does nothing real — just changes local state after a fake delay
-- No `versions` table in the database — versions are never created or stored
-- Should auto-create a version snapshot whenever files change (or on user action)
+1. **No real deployment/hosting** — Publish tab just sets a DB flag. No actual serving of built apps. Lovable compiles and hosts apps on real infrastructure.
 
-**3. Publish Tab — Mostly Fake (CRITICAL)**
-- "Publish" button just does a fake 1.5s delay and sets local state
-- Hardcoded subdomain `my-saas-app` / domain `buildstack.app` — not dynamic
-- Custom domain verification is a fake 2s delay
-- SSL status is purely cosmetic
-- No actual deployment mechanism exists
+2. **No GitHub integration (push/pull)** — Import exists (read-only scan of public repos), but no bidirectional sync, no push-to-repo, no branch management.
 
-**4. Dev Tab — File Explorer Shows Host App Files, Not Project Files**
-- `file-tree.ts` uses `import.meta.glob` to read the *host application's* source files
-- The file tree and code viewer show BuildStack's own source code, not the user's generated project files
-- Should read from `project_files` table instead
+3. **No file storage** — No image uploads, no asset management. Users can't add images/fonts to their projects.
 
-**5. Plan Tab — No Auto-Save, No "Build This" Integration with Existing Files**
-- Plan generated in PlanMode doesn't consider existing project files
-- "Build This Plan" creates duplicate command queue entries without checking what's already built
+4. **No real-time collaboration** — No multi-user editing, no presence indicators, no shared workspaces.
 
-**6. Edit Tab — Minor Gaps**
-- Screenshot capture uses `html2canvas` on the container div, which captures the Sandpack wrapper, not the actual iframe content (cross-origin limitation)
-- No file export/download capability
+5. **No project export/download** — Can't download project as ZIP for self-hosting.
 
-**7. Settings Tab — Missing Stack/Features Editing**
-- Can edit name and description but not stack, priorities, or day_one_features
-- No way to change the AI model used for the project
+6. **No visual edit (direct manipulation)** — The select mode only populates a chat prompt. Lovable's Visual Edit allows direct text/color/font changes without AI credits.
 
-**8. Dashboard — No Search or Filter**
-- No search bar, no status filter, no sort options
+7. **No database management UI** — No way for end users to create tables, view data, or manage their project's database schema.
+
+8. **No edge function authoring** — End users can't write/deploy backend functions for their generated apps.
+
+9. **Currently depends on Lovable AI gateway** — All AI calls go through `ai.gateway.lovable.dev`. If Lovable revokes access or you leave the platform, AI stops working.
+
+10. **No project templates/starters** — No gallery of pre-built templates to clone.
+
+**MODERATE GAPS**
+
+11. **No undo/redo within edit session** — Version History exists but no granular undo.
+12. **No mobile preview via QR code** — Viewport switcher exists but no way to preview on actual phone.
+13. **No environment variables management for generated apps** — Secret management exists for API keys but not for the generated app's own env vars.
+14. **No custom domain SSL verification** — DNS config is shown but never verified.
+15. **No team/workspace features** — Single-user only.
 
 ---
 
-### Implementation Plan
+### Plan: Replace Lovable AI Gateway with Direct Gemini API
 
-#### Step 1: Create `project_versions` Table
-- Add migration: `project_versions` table with `id, project_id, version_label, note, snapshot (jsonb of file paths→content), created_at, user_id`
-- Add RLS policies for user-owned access
-- Auto-create a version snapshot in EditMode whenever files are applied (debounced, or via explicit "Save Version" button)
+#### Step 1: Add Google Gemini API Key Support
+- Add a secret `GOOGLE_GEMINI_API_KEY` via the secrets tool
+- Update `supabase/functions/chat/index.ts` to call `https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent` directly instead of `ai.gateway.lovable.dev`
+- Update `supabase/functions/analyze-prompt/index.ts` similarly
+- Update `supabase/functions/test-analyze/index.ts` similarly
+- Keep `LOVABLE_API_KEY` as fallback — try Gemini first, fall back to Lovable gateway if no key configured
+- Update model names: `google/gemini-2.5-flash` → `gemini-2.5-flash` (Gemini API format)
 
-#### Step 2: Rebuild Version History Tab with Real Data
-- Replace `mockVersions` with a query to `project_versions`
-- "Rollback" loads snapshot files back into `project_files` and updates `previewFiles`
-- Add "Create Snapshot" button for manual version saves
-- Show actual file diff count between versions
+#### Step 2: Update Settings to Configure AI Provider
+- Add "AI Provider" section to `SettingsPage.tsx` with toggle: "Lovable Gateway" vs "Google Gemini (direct)"
+- Store provider preference in `projects.ai_model` field (already exists)
+- Show cost comparison between providers
+- Add link to Google AI Studio for key generation
 
-#### Step 3: Rebuild Analysis Tab with Real AI Analysis
-- Replace mock data with an AI-powered scan: send project files to the chat edge function with an analysis prompt
-- Parse structured JSON findings from the response
-- Persist findings to a `project_analysis` table (or store in the project row)
-- "Re-scan" triggers a new AI analysis
-- "Dismiss" persists dismissal so findings don't reappear
+#### Step 3: Add Project Export (ZIP Download)
+- Create edge function `supabase/functions/export-project/index.ts` that:
+  - Reads all `project_files` for a project
+  - Generates a proper `package.json`, `vite.config.ts`, `tsconfig.json`
+  - Returns a ZIP blob
+- Add "Export as ZIP" button to Dev tab and Settings tab
+- Include a README with setup instructions
 
-#### Step 4: Fix Dev Tab File Explorer
-- Replace `import.meta.glob` file tree with data from `project_files` table
-- Build tree from project file paths, show actual project code in the viewer
-- Make the code viewer read-only but show the user's generated files
+#### Step 4: Add Direct Text/Color Editing (Visual Edit Mode)
+- Enhance the existing select mode in `EditMode.tsx`:
+  - When element is selected, show a floating panel with:
+    - Editable text content (direct inline editing)
+    - Color pickers for text/background
+    - Font size/weight controls
+    - Padding/margin sliders
+  - Apply changes directly to the file AST without consuming AI credits
+  - Use regex-based find/replace on the source file to update text and Tailwind classes
 
-#### Step 5: Make Publish Tab Functional
-- Generate a real preview URL using the project ID (e.g., `{projectId}.preview.buildstack.app`)
-- Store publish status and custom domain in the `projects` table (add `custom_domain`, `published_url` columns)
-- "Publish" updates project status and generates a shareable link
-- Custom domain stores the configuration (actual DNS verification would need infrastructure)
+#### Step 5: Add File Upload & Asset Management
+- Create a storage bucket `project-assets`
+- Add an "Assets" panel to Dev tab sidebar
+- Allow drag-and-drop image uploads
+- Generate import paths that work in Sandpack preview
+- Store uploaded assets in storage, reference via public URLs in generated code
 
-#### Step 6: Add Dashboard Search & Filter
-- Add search input filtering by project name/description
-- Add status filter dropdown (All, Draft, Published, Needs Attention)
-- Add sort toggle (newest first / alphabetical)
-
-#### Step 7: Enhance Settings Tab
-- Add editable fields for stack tags, priorities, day_one_features
-- Add AI model selector dropdown (from the supported models list)
-- Store selected model in project row, use it in chat function
+#### Step 6: Add Team/Workspace Support
+- New DB table: `workspaces` (id, name, owner_id, created_at)
+- New DB table: `workspace_members` (workspace_id, user_id, role)
+- Update `projects` to have optional `workspace_id`
+- Add invite flow in Settings
+- Update RLS policies for shared access
 
 ### Files Changed
-- **New migration**: `project_versions` table + `published_url`/`custom_domain` columns on `projects`
-- `src/pages/workspace/VersionHistory.tsx` — full rewrite with real data
-- `src/pages/workspace/AnalysisMode.tsx` — full rewrite with AI-powered scanning
-- `src/pages/workspace/DevMode.tsx` — replace host file tree with project files
-- `src/pages/workspace/PublishPage.tsx` — dynamic URLs, persist publish state
-- `src/pages/workspace/EditMode.tsx` — add version snapshot creation on file apply
-- `src/pages/workspace/SettingsPage.tsx` — add stack/model editing
-- `src/pages/Dashboard.tsx` — add search, filter, sort
-- `src/lib/file-tree.ts` — add function to build tree from project_files data
-- `src/lib/mock-data.ts` — remove mock versions and mock analysis (no longer needed)
+- `supabase/functions/chat/index.ts` — dual AI provider support (Gemini direct + Lovable fallback)
+- `supabase/functions/analyze-prompt/index.ts` — same dual provider
+- `supabase/functions/test-analyze/index.ts` — same dual provider
+- New: `supabase/functions/export-project/index.ts` — ZIP export
+- `src/pages/workspace/SettingsPage.tsx` — AI provider config + export button
+- `src/pages/workspace/EditMode.tsx` — visual direct-edit panel
+- `src/pages/workspace/DevMode.tsx` — asset management panel
+- New DB migration: `workspaces`, `workspace_members` tables + storage bucket
 
