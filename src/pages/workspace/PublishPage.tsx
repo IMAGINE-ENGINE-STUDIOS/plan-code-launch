@@ -29,7 +29,7 @@ const PublishPage = () => {
   });
 
   const isPublished = project?.status === 'published';
-  const publishedUrl = project?.published_url || `https://${project?.name?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'app'}-${projectId?.slice(0, 8)}.buildstack.app`;
+  const publishedUrl = project?.published_url || `https://${project?.name?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'app'}-${projectId?.slice(0, 8)}.imagineengine.app`;
   const savedDomain = project?.custom_domain || '';
   const hasCustomDomain = !!savedDomain;
 

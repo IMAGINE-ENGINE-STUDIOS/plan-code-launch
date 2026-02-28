@@ -140,7 +140,7 @@ const ImportProject = () => {
         </div>
 
         <p className="mb-6 text-sm text-muted-foreground">
-          Paste a public GitHub repo URL to import its source files. Works best with Lovable-generated projects.
+          Paste a public GitHub repo URL to import its source files. Works best with Imagine Engine-generated projects.
         </p>
 
         {/* URL Input */}
@@ -219,7 +219,7 @@ const ImportProject = () => {
           </h3>
           <ul className="space-y-1 text-xs text-muted-foreground">
             <li>• Public repos built with React + TypeScript + Tailwind CSS</li>
-            <li>• Lovable-exported projects (full compatibility)</li>
+            <li>• Imagine Engine-exported projects (full compatibility)</li>
             <li>• Projects under 80 source files</li>
             <li>• Standard src/ folder structure</li>
           </ul>

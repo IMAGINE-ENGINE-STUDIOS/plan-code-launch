@@ -1,7 +1,8 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Layers, Plus, LogOut, DollarSign } from 'lucide-react';
+import { Plus, LogOut, DollarSign } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+import logo from '@/assets/logo.png';
 
 const Navbar = () => {
   const location = useLocation();
@@ -12,10 +13,8 @@ const Navbar = () => {
     <nav className="sticky top-0 z-50 glass">
       <div className="container flex h-14 items-center justify-between">
         <Link to="/" className="flex items-center gap-2 font-display text-lg font-bold">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <Layers className="h-4 w-4 text-primary-foreground" />
-          </div>
-          BuildStack
+          <img src={logo} alt="Imagine Engine" className="h-8 w-8 rounded-lg" />
+          Imagine Engine
         </Link>
         <div className="flex items-center gap-3">
           {!user ? (
