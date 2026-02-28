@@ -61,7 +61,35 @@ const PlanReview = () => {
 
       if (planErr) throw planErr;
 
-      navigate(`/project/${project.id}/dev`, { replace: true });
+      // Build a comprehensive build prompt from the plan
+      const buildCommands: string[] = [];
+
+      // First command: Build the complete app foundation
+      const features = plan.find(s => s.title === 'MVP Features');
+      const routes = plan.find(s => s.title === 'Routes');
+      const summary = plan.find(s => s.title === 'Summary');
+      const dataModel = plan.find(s => s.title === 'Data Model');
+
+      const featureList = features?.items?.join(', ') || answers.dayOneFeatures.join(', ') || 'core app';
+      const routeList = routes?.items?.join('; ') || '';
+      const dataList = dataModel?.items?.join(', ') || '';
+
+      // Single comprehensive build prompt
+      const buildPrompt = [
+        `Build the complete "${answers.projectName || answers.buildType}" application.`,
+        summary?.content ? `\n\nOverview: ${summary.content}` : '',
+        `\n\nRequired features (ALL must be fully functional with real handlers, no placeholder buttons):\n- ${features?.items?.join('\n- ') || featureList}`,
+        routeList ? `\n\nRoutes to implement:\n- ${routes?.items?.join('\n- ')}` : '',
+        dataList ? `\n\nData model:\n- ${dataModel?.items?.join('\n- ')}` : '',
+        answers.description ? `\n\nApp description: ${answers.description}` : '',
+        `\n\nIMPORTANT: Build a COMPLETE, production-quality application. Every button must work. Every page must be fully implemented with real content, not placeholders. Include proper navigation between all routes. Use localStorage for data persistence. Include loading states, empty states, and error handling everywhere.`,
+      ].filter(Boolean).join('');
+
+      buildCommands.push(buildPrompt);
+
+      // Navigate to Edit tab with queue
+      const queueParam = encodeURIComponent(JSON.stringify(buildCommands));
+      navigate(`/project/${project.id}/edit?queue=${queueParam}`, { replace: true });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
       setBuilding(false);
