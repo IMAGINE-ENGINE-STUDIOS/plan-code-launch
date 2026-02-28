@@ -20,6 +20,7 @@ import CommandQueue from '@/components/CommandQueue';
 import SecretInput from '@/components/SecretInput';
 import { parseFileChanges, hasFileChanges } from '@/lib/parse-file-changes';
 import { stripCodeBlocks } from '@/lib/strip-code-blocks';
+import { parseDependencyMarkers, parseApiKeyMarkers } from '@/lib/parse-markers';
 
 const TEST_ANALYZE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/test-analyze`;
 const TEST_KEYWORDS = /\b(test|screenshot|check|analyze|analyse|review|inspect)\b/i;
@@ -66,6 +67,9 @@ const EditMode = () => {
   const [isAutoFixing, setIsAutoFixing] = useState(false);
   const [isTestAnalyzing, setIsTestAnalyzing] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<Record<number, Record<string, string>>>({});
+  const [dynamicDeps, setDynamicDeps] = useState<Record<string, string>>({});
+  const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set());
+  const [blockedContent, setBlockedContent] = useState<string | null>(null);
   const autoFixCountRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<(text: string) => Promise<void>>();
@@ -280,7 +284,25 @@ const EditMode = () => {
       }
 
       await saveMessage('assistant', assistantSoFar);
-      applyFilesToPreview(assistantSoFar);
+
+      // Parse dependency markers and add to dynamic deps
+      const depMarkers = parseDependencyMarkers(assistantSoFar);
+      if (depMarkers.length > 0) {
+        const newDeps: Record<string, string> = {};
+        depMarkers.forEach(d => { newDeps[d.packageName] = d.version; });
+        setDynamicDeps(prev => ({ ...prev, ...newDeps }));
+      }
+
+      // Parse API key markers — block code application until all keys are provided
+      const keyMarkers = parseApiKeyMarkers(assistantSoFar);
+      if (keyMarkers.length > 0) {
+        const requiredKeys = new Set(keyMarkers.map(k => k.key));
+        setPendingKeys(requiredKeys);
+        setBlockedContent(assistantSoFar);
+        // Don't apply files yet — will apply after all keys are saved
+      } else {
+        applyFilesToPreview(assistantSoFar);
+      }
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
@@ -565,7 +587,7 @@ const EditMode = () => {
         </div>
         <div className="flex flex-1 flex-col items-center justify-start overflow-hidden bg-muted/30 p-4">
           <div className="h-full overflow-hidden rounded-lg border border-border shadow-2xl transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
-            {project && <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} />}
+            {project && <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} extraDependencies={dynamicDeps} />}
           </div>
         </div>
         {showConsole && (
@@ -666,6 +688,16 @@ const EditMode = () => {
                                     secretKey={p.key}
                                     description={p.desc}
                                     onSaved={(key) => {
+                                      setPendingKeys(prev => {
+                                        const next = new Set(prev);
+                                        next.delete(key);
+                                        if (next.size === 0 && blockedContent) {
+                                          // All keys provided — apply blocked code
+                                          applyFilesToPreview(blockedContent);
+                                          setBlockedContent(null);
+                                        }
+                                        return next;
+                                      });
                                       sendMessage(`API key ${key} is now configured. Continue building.`);
                                     }}
                                   />
@@ -703,6 +735,18 @@ const EditMode = () => {
                       </div>
                     );
                   })}
+                  {pendingKeys.size > 0 && blockedContent && (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs">
+                      <div className="flex items-center gap-1.5 font-medium text-destructive mb-1">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Setup required before changes are applied
+                      </div>
+                      <p className="text-muted-foreground">
+                        Provide the following API key{pendingKeys.size > 1 ? 's' : ''} above:{' '}
+                        <span className="font-mono font-semibold text-foreground">{Array.from(pendingKeys).join(', ')}</span>
+                      </p>
+                    </div>
+                  )}
                   {(isStreaming || isTestAnalyzing) && messages[messages.length - 1]?.role !== 'assistant' && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />{isAutoFixing ? 'Auto-fixing error…' : isTestAnalyzing ? '📸 Analyzing preview…' : 'Building...'}
@@ -822,7 +866,7 @@ const EditMode = () => {
             <div className="flex flex-1 justify-center overflow-hidden bg-muted/20 p-2 min-h-0">
                 <div ref={previewContainerRef} className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
                   {project ? (
-                    <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} />
+                    <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} extraDependencies={dynamicDeps} />
                   ) : (
                     <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
                   )}

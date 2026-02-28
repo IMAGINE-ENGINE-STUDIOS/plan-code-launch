@@ -15,6 +15,7 @@ import { supabase } from '@/integrations/supabase/client';
 import SandpackPreview from '@/components/SandpackPreview';
 import { type TreeNode, getFileContents, buildFileTree } from '@/lib/file-tree';
 import { parseFileChanges } from '@/lib/parse-file-changes';
+import { parseDependencyMarkers } from '@/lib/parse-markers';
 
 // ─── File Tree Item ───
 const FileTreeItem = ({
@@ -77,6 +78,7 @@ const DevMode = () => {
   // Preview state
   const [viewport, setViewport] = useState<'mobile' | 'tablet' | 'desktop'>('desktop');
   const [previewFiles, setPreviewFiles] = useState<Record<string, string>>({});
+  const [dynamicDeps, setDynamicDeps] = useState<Record<string, string>>({});
 
   // Project status
   const [projectStatus, setProjectStatus] = useState<string>('draft');
@@ -204,6 +206,15 @@ const DevMode = () => {
       // Apply fixes
       const fixes = parseFileChanges(fullResponse);
       const fixedCount = Object.keys(fixes).length;
+
+      // Detect dynamic dependencies from auto-fix responses
+      const depMarkers = parseDependencyMarkers(fullResponse);
+      if (depMarkers.length > 0) {
+        const newDeps: Record<string, string> = {};
+        depMarkers.forEach(d => { newDeps[d.packageName] = d.version; });
+        setDynamicDeps(prev => ({ ...prev, ...newDeps }));
+      }
+
       if (fixedCount > 0) {
         setPreviewFiles(prev => ({ ...prev, ...fixes }));
         // Persist
@@ -365,6 +376,7 @@ const DevMode = () => {
                   files={previewFiles}
                   projectName="preview"
                   onError={handlePreviewError}
+                  extraDependencies={dynamicDeps}
                 />
               </div>
             </div>
