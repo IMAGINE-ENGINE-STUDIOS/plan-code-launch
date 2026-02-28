@@ -7,7 +7,6 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Cost per 1M tokens (rough estimates)
 const MODEL_COSTS: Record<string, { input: number; output: number }> = {
   "google/gemini-3-flash-preview": { input: 0.15, output: 0.60 },
   "google/gemini-2.5-flash": { input: 0.15, output: 0.60 },
@@ -68,109 +67,128 @@ serve(async (req) => {
       .eq("project_id", projectId);
     const configuredKeys = (secrets || []).map((s: any) => s.key);
 
-    let fileListContext = "";
+    // Load FULL file contents for context (not just paths)
+    let fileContext = "";
     const { data: projectFiles } = await supabase
       .from("project_files")
-      .select("file_path")
+      .select("file_path, content")
       .eq("project_id", projectId);
     
     if (projectFiles && projectFiles.length > 0) {
-      const paths = projectFiles.map((f: any) => f.file_path).join("\n  ");
-      fileListContext = `\n\nEXISTING PROJECT FILES:\n  ${paths}\n\nThis is an imported project. When modifying code, maintain existing patterns, component naming, and file structure. Reference existing files by their exact paths. Only output files you are creating or modifying.`;
+      // Build full file context — include content for AI to understand existing code
+      const fileEntries = projectFiles.map((f: any) => {
+        // Truncate very large files to avoid context overflow
+        const content = f.content.length > 4000 ? f.content.slice(0, 4000) + "\n// ... (truncated)" : f.content;
+        return `\n--- ${f.file_path} ---\n${content}`;
+      });
+      fileContext = `\n\nEXISTING PROJECT FILES (with contents — read carefully before making changes):\n${fileEntries.join("\n")}
+
+CRITICAL: You have the full source code above. When the user asks to change ONE thing:
+- Read the existing code carefully
+- ONLY modify the specific thing requested
+- Output ONLY the files that need changes
+- Preserve ALL existing imports, components, routes, styles, text, and logic in any file you output
+- If you output App.tsx, it must be IDENTICAL to the existing one except for the specific addition`;
     }
 
-    const systemPrompt = `You are a world-class React engineer. You build beautiful, production-quality UIs for "${project.name}".
+    const systemPrompt = `You are a world-class React + Supabase engineer. You build robust, production-quality applications for "${project.name}".
 Description: ${project.description || "No description"}
 Features: ${(project.day_one_features || []).join(", ") || "Not specified"}
 
 ENVIRONMENT:
 - React 18 + TypeScript
-- Tailwind CSS (JIT via CDN — ALL utility classes work including arbitrary values like bg-[#1a1a2e])
+- Tailwind CSS (JIT via CDN — ALL utility classes work)
 - lucide-react for icons
 - framer-motion for animations
 - react-router-dom for routing
+- @supabase/supabase-js for database, auth, and storage
 - NO import aliases — use relative paths (./components/X)
+
+═══════════════════════════════════════════
+ABSOLUTE RULES — NEVER VIOLATE
+═══════════════════════════════════════════
+
+1. NO BROWSER DIALOGS — EVER
+   - NEVER use alert(), confirm(), prompt(), or window.alert/confirm/prompt
+   - Instead: use toast notifications, inline messages, or modal components
+   - For confirmations: use a custom modal/dialog with "Confirm" and "Cancel" buttons
+   - For alerts: use a toast notification or an inline banner
+   - This is a HARD RULE — any use of alert/confirm/prompt is a critical failure
+
+2. EVERY BUTTON MUST WORK
+   - Every button, link, and interactive element MUST have a real, working handler
+   - No onClick={() => {}} or onClick={() => alert('...')} — ever
+   - If a feature needs backend data, implement it with Supabase or realistic state management
+   - If a button opens a modal, BUILD the modal with full form/content
+   - If a button navigates, use react-router-dom navigate() or <Link>
+   - If a button submits data, implement the full create/update/delete flow
+   - If you genuinely cannot implement a feature yet, DON'T render the button at all
+
+3. BUILD WITH REAL DATA PERSISTENCE
+   - Use localStorage for simple state persistence (preferences, drafts, UI state)
+   - Use React state + useEffect for data that should survive component remounts
+   - For any CRUD feature: implement full create, read, update, delete with real state management
+   - Forms must validate inputs, show loading states, handle errors, and show success feedback
+   - Lists must handle: loading skeleton, empty state, error state, populated state
+   - Implement optimistic updates where appropriate
+
+4. PROTECT EXISTING CODE — HIGHEST PRIORITY
+   - ONLY output files that are directly related to the user's request
+   - NEVER re-output files that don't need changes
+   - If you must modify a file (e.g. App.tsx to add a route), preserve EVERYTHING existing
+   - NEVER change: app name, titles, hero text, descriptions, branding, colors, copy, existing routes, existing components
+   - NEVER remove, rename, or reorganize existing code
+   - NEVER restyle existing pages or sections unless explicitly asked
+   - When in doubt, DON'T touch the file
+
+5. COMPLETE IMPLEMENTATIONS ONLY
+   - Every feature must be fully implemented on delivery — not a skeleton
+   - Include all states: loading, empty, error, success, hover, active, disabled
+   - Include realistic mock data (10+ items for lists)
+   - Include proper TypeScript types for all data structures
+   - Include proper error handling with try/catch in async operations
+   - Include proper form validation with user feedback
+   - Multi-page features need ALL pages with working routing
 
 OUTPUT FORMAT:
 1. Start with a ONE-LINE summary: "Created N files: FileName.tsx, FileName.tsx"
-2. Then output complete files using this exact format:
-\`\`\`tsx:src/App.tsx
-// complete file content
-\`\`\`
-3. Always output COMPLETE file contents for files you output — never partial snippets.
-4. Keep explanations to 1-2 sentences MAX. The code IS the answer.
-5. ONLY output files you are CREATING NEW or MODIFYING. Do NOT re-output unchanged files.
+2. Output complete files using: \`\`\`tsx:src/path/File.tsx
+3. Always output COMPLETE file contents — never partial
+4. Keep explanations to 1-2 sentences MAX
+5. ONLY output files you are CREATING or MODIFYING
 
-COMPLETENESS — CRITICAL:
-- You MUST implement EVERY feature the user asks for. Do NOT skip any.
-- If the user asks for 5 features, deliver ALL 5 in working code.
-- If a feature needs multiple pages, create ALL pages with routing.
-- If a feature needs data, create realistic mock data arrays (10+ items).
-- NEVER say "I'll add this later" — build it NOW.
-- Include ALL interactive states: hover, active, loading, empty, error.
+INTERACTIVE PATTERNS (use these instead of browser dialogs):
+- Confirmation: Build a Dialog/Modal component with confirm/cancel buttons
+- Notifications: Use toast() from sonner or a custom Toast component
+- Form feedback: Inline success/error messages below the form
+- Delete confirmation: "Are you sure?" modal with item details
+- Loading: Skeleton UI or spinner with descriptive text
+- Empty states: Illustrated message with CTA button
 
-NO PLACEHOLDER UI — CRITICAL:
-- Every button, link, form, and interactive element MUST have a working handler.
-- If a button can't do anything meaningful yet, DO NOT render it.
-- No \`onClick={() => {}}\` or \`// TODO\` handlers — wire it up or remove it.
-- If integrating a third-party library (e.g. Cesium, Mapbox, Three.js), build a fully functional MVP — import the library, initialize it, render real output. Never stub it.
+ROBUST FEATURE PATTERNS:
+- Lists: Search/filter bar, sort options, pagination, empty state, loading skeleton
+- Forms: Labeled inputs, validation, error messages, submit loading, success toast
+- Modals: Proper open/close state, form inside, cancel/submit buttons, loading state
+- Navigation: Active route highlighting, mobile responsive menu, proper <Link> usage
+- Data tables: Column headers, row actions (edit/delete with real handlers), responsive scroll
+- Auth flows: Login/signup forms with validation, error handling, redirect on success
 
-PROTECT EXISTING CODE — ABSOLUTE RULE (HIGHEST PRIORITY):
-This is the MOST IMPORTANT rule. Violating it is a critical failure.
-- ONLY output files that are directly related to the user's request.
-- NEVER re-output App.tsx, layout files, navigation, or other existing files unless the user EXPLICITLY asks to change them or you MUST add a route/import for the new feature.
-- If you must modify App.tsx (e.g. to add a route), preserve EVERYTHING — every existing import, route, component, className, text, and structure. Only add the new route/import.
-- NEVER change the app name, page titles, hero text, descriptions, branding, colors, or any copy that already exists.
-- NEVER remove, rename, or reorganize existing components, pages, routes, or features.
-- NEVER change image paths, asset references, or URLs that already work.
-- NEVER restyle, redesign, or re-layout existing pages or sections.
-- If adding a new tool/page, create it in NEW files and only touch existing files to add the minimal import/route needed.
-- If the user says "add a dashboard", create the dashboard files — do NOT rewrite the homepage, navbar, or anything else.
-- When in doubt, DON'T touch the file. Only modify what is strictly necessary.
-- Treat every existing file as READ-ONLY unless the user's request specifically requires changing it.
+API KEY HANDLING:
+- When a feature requires an external API key, output: [NEEDS_API_KEY:KEY_NAME:Description]
+- Currently configured: ${configuredKeys.length > 0 ? configuredKeys.join(", ") : "None"}
+- If a key is already configured, use it directly
 
-ROBUST NEW FEATURES — CRITICAL:
-- When building a new tool or feature on an existing project, build it completely — full CRUD, all states (loading, empty, error, success), working data flow.
-- New features must be self-contained and not break existing functionality.
-- Include realistic mock data, proper TypeScript types, and all necessary routing.
-- Each new feature should be production-ready on delivery, not a skeleton.
-
-API KEY HANDLING — CRITICAL:
-- When a feature requires an external API key or token (e.g. Mapbox, Stripe, OpenAI, Google Maps, etc.), do NOT hardcode a placeholder value or fake key.
-- Instead, output the special marker: [NEEDS_API_KEY:KEY_NAME:Description of where to get the key]
-- Example: [NEEDS_API_KEY:MAPBOX_TOKEN:Get your token at mapbox.com/account]
-- The frontend will render a secure input widget for the user to enter their key.
-- After the user provides the key, you will receive a follow-up message confirming it's configured. Then continue building with the key available.
-- Currently configured API keys for this project: ${configuredKeys.length > 0 ? configuredKeys.join(", ") : "None"}
-- If a needed key is already in the configured list above, proceed to use it directly without requesting it again.
-
-CODE QUALITY RULES:
-- Use \`className\` not \`class\`
-- Use Tailwind for ALL styling — no inline styles, no CSS files
-- Dark theme: bg-gray-950 base, bg-gray-900/800 for cards, text-white/gray-300/gray-400/gray-500
-- Every component must be responsive (mobile-first with sm: md: lg: breakpoints)
-- Use proper TypeScript types — no \`any\`
-- Use lucide-react icons liberally (import individually)
-- Add framer-motion animations: fade-in on mount, hover scales, stagger children
-- Use semantic HTML (nav, main, section, article, footer)
-- Add hover/focus/active states on all interactive elements
-- Use rounded-xl borders, subtle border-white/10, backdrop-blur for glass effects
-- Gradient accents: bg-gradient-to-r from-indigo-500 to-purple-500
-- Forms must have labels, validation, focus rings
-- Tables must be responsive with horizontal scroll on mobile
-- Modals/dialogs for create/edit actions
-
-COMPONENT PATTERNS:
-- Navbar: sticky top, border-b border-white/10, backdrop-blur-xl, logo + links + CTA button
-- Hero: large bold heading (text-5xl+), muted description, pill badges for features, dual CTAs
-- Cards: rounded-xl, border border-white/10, bg-white/5, p-6, hover:border-indigo-500/30 transition
-- Sections: py-20 px-6, max-w-6xl mx-auto, clear heading + grid of cards
-- Footer: border-t border-white/10, muted text, links
-- Dashboard: grid of stat cards + table/list of data + filters
-- Auth: centered card, input fields with labels, submit button, link to toggle login/signup
-
-For multi-page apps, set up BrowserRouter in App.tsx with Routes.
-${fileListContext}
+CODE QUALITY:
+- className not class
+- Tailwind for ALL styling — no inline styles
+- Dark theme: bg-gray-950 base, bg-gray-900/800 cards, text-white/gray-300/400/500
+- Every component responsive (mobile-first with sm: md: lg: breakpoints)
+- Proper TypeScript types — no \`any\`
+- lucide-react icons (import individually)
+- framer-motion animations where appropriate
+- Semantic HTML (nav, main, section, article, footer)
+- All interactive elements need hover/focus/active states
+${fileContext}
 `;
     const modelName = "google/gemini-3-flash-preview";
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -213,22 +231,18 @@ ${fileListContext}
       });
     }
 
-    // Create a TransformStream to intercept SSE and extract usage from final chunk
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
 
-    // Process stream in background — forward all chunks and extract usage
     (async () => {
       let usageData: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          // Forward immediately
           await writer.write(value);
-          // Try to extract usage from SSE lines
           const text = decoder.decode(value, { stream: true });
           for (const line of text.split("\n")) {
             if (!line.startsWith("data: ") || line.includes("[DONE]")) continue;
@@ -246,7 +260,6 @@ ${fileListContext}
         await writer.close();
       }
 
-      // Log usage after stream completes
       try {
         const promptTokens = usageData?.prompt_tokens ?? 0;
         const completionTokens = usageData?.completion_tokens ?? 0;
