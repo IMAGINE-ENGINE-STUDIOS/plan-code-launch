@@ -615,7 +615,7 @@ const EditMode = () => {
     <div className="h-full">
       <ResizablePanelGroup direction="horizontal">
         {/* Chat Panel */}
-        <ResizablePanel defaultSize={25} minSize={18}>
+        <ResizablePanel defaultSize={35} minSize={20}>
           <div className="flex h-full flex-col">
             <div className="flex items-center justify-between border-b border-border px-4 py-2">
               <span className="text-sm font-semibold">AI Chat</span>
@@ -645,7 +645,6 @@ const EditMode = () => {
                     const fileCount = m.role === 'assistant' ? getFileCount(m.content) : 0;
                     const displayContent = m.role === 'assistant' ? stripCodeBlocks(m.content) : m.content;
 
-                    // Parse [NEEDS_API_KEY:KEY:desc] markers from assistant messages
                     const apiKeyRegex = /\[NEEDS_API_KEY:([^:]+):([^\]]+)\]/g;
                     const parts: Array<{ type: 'text'; value: string } | { type: 'secret'; key: string; desc: string }> = [];
                     if (m.role === 'assistant') {
@@ -692,7 +691,6 @@ const EditMode = () => {
                                         const next = new Set(prev);
                                         next.delete(key);
                                         if (next.size === 0 && blockedContent) {
-                                          // All keys provided — apply blocked code
                                           applyFilesToPreview(blockedContent);
                                           setBlockedContent(null);
                                         }
@@ -710,23 +708,13 @@ const EditMode = () => {
                         ) : (
                           <p className="whitespace-pre-wrap">{m.content}</p>
                         )}
-                        {/* Approval buttons for test analysis */}
                         {pendingApprovals[i] && (
                           <div className="mt-3 flex items-center gap-2 border-t border-border/50 pt-3">
-                            <Button
-                              size="sm"
-                              className="h-8 gap-1.5 text-xs"
-                              onClick={() => approveChanges(i)}
-                            >
+                            <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => approveChanges(i)}>
                               <Check className="h-3.5 w-3.5" />
                               Approve & Apply Changes
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 gap-1.5 text-xs text-muted-foreground"
-                              onClick={() => dismissChanges(i)}
-                            >
+                            <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs text-muted-foreground" onClick={() => dismissChanges(i)}>
                               <XCircle className="h-3.5 w-3.5" />
                               Dismiss
                             </Button>
@@ -757,10 +745,8 @@ const EditMode = () => {
               )}
             </ScrollArea>
 
-            {/* Command Queue */}
             <CommandQueue queue={queue} onRemove={removeFromQueue} onClear={() => setQueue([])} />
 
-            {/* Input */}
             <div className="border-t border-border p-3">
               <div className="flex gap-2">
                 <Textarea
@@ -780,14 +766,11 @@ const EditMode = () => {
                   {isAutoFixing ? '🔧 Auto-fixing detected error…' : 'AI is building… new prompts will be queued automatically'}
                 </p>
               )}
-              {/* Auto-fix toggle */}
               <div className="mt-2 flex items-center justify-between">
                 <button
                   onClick={() => setAutoFixEnabled(prev => !prev)}
                   className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
-                    autoFixEnabled
-                      ? 'bg-primary/10 text-primary'
-                      : 'bg-muted/50 text-muted-foreground'
+                    autoFixEnabled ? 'bg-primary/10 text-primary' : 'bg-muted/50 text-muted-foreground'
                   }`}
                 >
                   <Wrench className="h-3 w-3" />
@@ -807,7 +790,7 @@ const EditMode = () => {
         <ResizableHandle withHandle />
 
         {/* Live Preview */}
-        <ResizablePanel defaultSize={50} minSize={30}>
+        <ResizablePanel defaultSize={65} minSize={35}>
           <div className="flex h-full flex-col">
             <div className="flex items-center justify-between border-b border-border px-4 py-2">
               <div className="flex items-center gap-3">
@@ -849,7 +832,6 @@ const EditMode = () => {
               </div>
             </div>
 
-            {/* Select mode banner */}
             {selectMode && (
               <div className="flex items-center justify-between bg-primary/10 px-4 py-1.5 text-xs text-primary">
                 <span className="flex items-center gap-1.5">
@@ -863,7 +845,7 @@ const EditMode = () => {
             )}
 
             <div className="flex flex-1 flex-col overflow-hidden min-h-0">
-            <div className="flex flex-1 justify-center overflow-hidden bg-muted/20 p-2 min-h-0">
+              <div className="flex flex-1 justify-center overflow-hidden bg-muted/20 p-2 min-h-0">
                 <div ref={previewContainerRef} className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
                   {project ? (
                     <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} extraDependencies={dynamicDeps} />
@@ -891,13 +873,6 @@ const EditMode = () => {
               )}
             </div>
           </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Code Viewer */}
-        <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-          <CodeViewer files={previewFiles} />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
