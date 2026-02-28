@@ -162,7 +162,7 @@ createRoot(document.getElementById('root')!).render(
 
 // This component is injected into the Sandpack preview to enable route navigation
 function generateRouteNavigatorCode(routes: Array<{ path: string; label: string }>): string {
-  return `import React, { useState } from 'react';
+  return `import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const ROUTES = ${JSON.stringify(routes)};
@@ -171,96 +171,134 @@ export default function RouteNavigator() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const panelRef = useRef(null);
 
   if (ROUTES.length <= 1) return null;
 
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const currentLabel = ROUTES.find(r => r.path === location.pathname)?.label || location.pathname;
+
   return (
-    <>
+    <div ref={panelRef} style={{ position: 'fixed', bottom: 16, left: 16, zIndex: 99999, fontFamily: "'Inter', system-ui, sans-serif" }}>
+      {/* Trigger button */}
       <button
         onClick={() => setOpen(!open)}
         style={{
-          position: 'fixed',
-          bottom: 16,
-          left: 16,
-          zIndex: 99999,
-          width: 40,
-          height: 40,
-          borderRadius: '50%',
-          background: '#6366f1',
-          color: '#fff',
-          border: 'none',
-          cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 4px 12px rgba(99,102,241,0.4)',
-          fontSize: 18,
-          transition: 'transform 0.2s',
-          transform: open ? 'rotate(45deg)' : 'rotate(0deg)',
+          gap: 6,
+          height: 36,
+          padding: open ? '0 10px' : '0 12px',
+          borderRadius: 10,
+          background: open ? '#1a1a24' : 'linear-gradient(135deg, #6366f1, #818cf8)',
+          color: '#fff',
+          border: open ? '1px solid #2a2a36' : 'none',
+          cursor: 'pointer',
+          boxShadow: open ? '0 4px 16px rgba(0,0,0,0.4)' : '0 4px 16px rgba(99,102,241,0.35)',
+          fontSize: 12,
+          fontWeight: 500,
+          transition: 'all 0.2s ease',
+          whiteSpace: 'nowrap',
         }}
-        title="Page Navigator"
+        title={\`Navigate pages • Current: \${currentLabel}\`}
       >
-        {open ? '✕' : '☰'}
+        <span style={{ fontSize: 14, lineHeight: 1 }}>{open ? '✕' : '☰'}</span>
+        {!open && <span>{currentLabel}</span>}
       </button>
 
+      {/* Route panel */}
       {open && (
         <div
           style={{
-            position: 'fixed',
-            bottom: 64,
-            left: 16,
-            zIndex: 99999,
-            width: 220,
-            maxHeight: 320,
+            position: 'absolute',
+            bottom: 44,
+            left: 0,
+            width: 240,
+            maxHeight: 360,
             overflowY: 'auto',
-            background: '#1a1a24',
+            background: '#111118',
             border: '1px solid #2a2a36',
-            borderRadius: 12,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            padding: 8,
+            borderRadius: 14,
+            boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+            padding: 6,
+            animation: 'navPanelIn 0.15s ease-out',
           }}
         >
-          <div style={{ padding: '4px 8px 8px', borderBottom: '1px solid #2a2a36', marginBottom: 4 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>Pages</div>
-            <div style={{ fontSize: 9, color: '#8a8a9a' }}>Navigate between app routes</div>
+          <style>{\`
+            @keyframes navPanelIn {
+              from { opacity: 0; transform: translateY(8px) scale(0.96); }
+              to { opacity: 1; transform: translateY(0) scale(1); }
+            }
+            .nav-route-btn:hover { background: rgba(255,255,255,0.06) !important; }
+            .nav-route-btn.active:hover { background: rgba(99,102,241,0.18) !important; }
+          \`}</style>
+
+          <div style={{ padding: '6px 10px 8px', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#fff', letterSpacing: '0.02em' }}>Pages</div>
+            <div style={{ fontSize: 9, color: '#5a5a6a', marginTop: 1 }}>{ROUTES.length} routes available</div>
           </div>
+
           {ROUTES.map((route) => {
             const isActive = location.pathname === route.path;
             return (
               <button
                 key={route.path}
+                className={\`nav-route-btn \${isActive ? 'active' : ''}\`}
                 onClick={() => { navigate(route.path); setOpen(false); }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 8,
+                  gap: 10,
                   width: '100%',
                   padding: '8px 10px',
                   border: 'none',
-                  borderRadius: 8,
-                  background: isActive ? 'rgba(99,102,241,0.15)' : 'transparent',
-                  color: isActive ? '#818cf8' : '#b0b0be',
+                  borderRadius: 9,
+                  background: isActive ? 'rgba(99,102,241,0.12)' : 'transparent',
+                  color: isActive ? '#a5b4fc' : '#b0b0be',
                   fontSize: 12,
                   fontWeight: isActive ? 600 : 400,
                   cursor: 'pointer',
                   textAlign: 'left',
-                  transition: 'background 0.15s',
+                  transition: 'all 0.12s ease',
+                  position: 'relative',
                 }}
-                onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
-                onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
               >
-                <span style={{ fontSize: 14 }}>{route.path === '/' ? '🏠' : '📄'}</span>
-                <span>{route.label}</span>
-                {isActive && <span style={{ marginLeft: 'auto', fontSize: 10 }}>●</span>}
+                {isActive && (
+                  <span style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    width: 3,
+                    height: 16,
+                    borderRadius: 2,
+                    background: '#6366f1',
+                  }} />
+                )}
+                <span style={{ fontSize: 13, lineHeight: 1, marginLeft: isActive ? 4 : 0 }}>
+                  {route.path === '/' ? '🏠' : '📄'}
+                </span>
+                <span style={{ flex: 1 }}>{route.label}</span>
+                {isActive && <span style={{ fontSize: 8, color: '#6366f1' }}>●</span>}
               </button>
             );
           })}
-          <div style={{ padding: '6px 10px 2px', fontSize: 9, color: '#5a5a6a', textAlign: 'center' }}>
+
+          <div style={{ padding: '6px 10px 4px', fontSize: 9, color: '#3a3a48', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.04)', marginTop: 4 }}>
             {location.pathname}
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }`;
 }
@@ -339,18 +377,66 @@ export default function SandpackPreview({ files, projectName, onError, extraDepe
       files={sandpackFiles}
       customSetup={{
         dependencies: {
+          // Core
           'react': '^18.3.1',
           'react-dom': '^18.3.1',
           'react-router-dom': '^6.30.0',
+          // Icons & Animation
           'lucide-react': '^0.462.0',
           'framer-motion': '^12.0.0',
+          // Styling utilities
           'class-variance-authority': '^0.7.1',
           'clsx': '^2.1.1',
           'tailwind-merge': '^2.6.0',
+          // Data & Forms
+          '@tanstack/react-query': '^5.83.0',
+          'react-hook-form': '^7.61.1',
+          '@hookform/resolvers': '^3.10.0',
+          'zod': '^3.25.0',
+          '@supabase/supabase-js': '^2.98.0',
+          // Content
+          'react-markdown': '^10.1.0',
+          // Utilities
           'date-fns': '^3.6.0',
+          'next-themes': '^0.3.0',
+          'html2canvas': '^1.4.1',
+          // Charts & Notifications
           'recharts': '^2.15.0',
           'sonner': '^1.7.0',
           'cmdk': '^1.0.0',
+          // Radix UI Primitives
+          '@radix-ui/react-dialog': '^1.1.14',
+          '@radix-ui/react-popover': '^1.1.14',
+          '@radix-ui/react-tabs': '^1.1.12',
+          '@radix-ui/react-tooltip': '^1.2.7',
+          '@radix-ui/react-select': '^2.2.5',
+          '@radix-ui/react-checkbox': '^1.3.2',
+          '@radix-ui/react-switch': '^1.2.5',
+          '@radix-ui/react-accordion': '^1.2.11',
+          '@radix-ui/react-avatar': '^1.1.10',
+          '@radix-ui/react-progress': '^1.1.7',
+          '@radix-ui/react-slider': '^1.3.5',
+          '@radix-ui/react-label': '^2.1.7',
+          '@radix-ui/react-slot': '^1.2.3',
+          '@radix-ui/react-separator': '^1.1.7',
+          '@radix-ui/react-toggle': '^1.1.9',
+          '@radix-ui/react-toggle-group': '^1.1.10',
+          '@radix-ui/react-dropdown-menu': '^2.1.15',
+          '@radix-ui/react-context-menu': '^2.2.15',
+          '@radix-ui/react-alert-dialog': '^1.1.14',
+          '@radix-ui/react-hover-card': '^1.1.14',
+          '@radix-ui/react-navigation-menu': '^1.2.13',
+          '@radix-ui/react-radio-group': '^1.3.7',
+          '@radix-ui/react-scroll-area': '^1.2.9',
+          '@radix-ui/react-aspect-ratio': '^1.1.7',
+          '@radix-ui/react-collapsible': '^1.1.11',
+          '@radix-ui/react-menubar': '^1.1.15',
+          // Layout & Input
+          'embla-carousel-react': '^8.6.0',
+          'vaul': '^0.9.9',
+          'input-otp': '^1.4.2',
+          'react-day-picker': '^8.10.1',
+          'react-resizable-panels': '^2.1.9',
           ...(extraDependencies || {}),
         },
         entry: '/src/index.tsx',

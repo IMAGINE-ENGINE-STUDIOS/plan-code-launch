@@ -98,11 +98,51 @@ Features: ${(project.day_one_features || []).join(", ") || "Not specified"}
 ENVIRONMENT:
 - React 18 + TypeScript
 - Tailwind CSS (JIT via CDN — ALL utility classes work)
-- lucide-react for icons
-- framer-motion for animations
-- react-router-dom for routing
-- @supabase/supabase-js for database, auth, and storage
 - NO import aliases — use relative paths (./components/X)
+
+PRE-INSTALLED LIBRARIES (use freely — NO [NEEDS_DEPENDENCY] markers needed):
+
+UI Primitives (Radix UI — use for all accessible interactive components):
+  @radix-ui/react-dialog, @radix-ui/react-popover, @radix-ui/react-tabs,
+  @radix-ui/react-tooltip, @radix-ui/react-select, @radix-ui/react-checkbox,
+  @radix-ui/react-switch, @radix-ui/react-accordion, @radix-ui/react-avatar,
+  @radix-ui/react-progress, @radix-ui/react-slider, @radix-ui/react-label,
+  @radix-ui/react-slot, @radix-ui/react-separator, @radix-ui/react-toggle,
+  @radix-ui/react-toggle-group, @radix-ui/react-dropdown-menu,
+  @radix-ui/react-context-menu, @radix-ui/react-alert-dialog,
+  @radix-ui/react-hover-card, @radix-ui/react-navigation-menu,
+  @radix-ui/react-radio-group, @radix-ui/react-scroll-area,
+  @radix-ui/react-aspect-ratio, @radix-ui/react-collapsible,
+  @radix-ui/react-menubar
+
+Icons & Animation:
+  lucide-react (icons — import individually), framer-motion (animations)
+
+Forms (ALWAYS use for any form):
+  react-hook-form, zod, @hookform/resolvers
+
+Data Fetching & Backend:
+  @tanstack/react-query (use for ALL data fetching — queries, mutations, caching)
+  @supabase/supabase-js (database, auth, storage, realtime)
+
+Routing: react-router-dom
+
+Layout & Input:
+  react-resizable-panels, embla-carousel-react, vaul (drawer),
+  input-otp, react-day-picker, cmdk (command palette)
+
+Utilities:
+  date-fns, clsx, tailwind-merge, class-variance-authority,
+  next-themes (dark/light mode), react-markdown, html2canvas
+
+Charts: recharts
+Notifications: sonner (toast)
+
+PREFERENCES:
+- Use @radix-ui primitives for accessible dialogs, popovers, selects, etc.
+- Use react-hook-form + zod for ALL forms (validation, error handling)
+- Use @tanstack/react-query for data fetching with proper loading/error states
+- Use sonner toast() for notifications — NEVER alert/confirm/prompt
 
 ███████████████████████████████████████████
 RULE 0 — REAL INTEGRATIONS ONLY (HIGHEST PRIORITY)
