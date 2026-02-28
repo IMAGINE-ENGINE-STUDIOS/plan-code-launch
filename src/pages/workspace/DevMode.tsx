@@ -227,7 +227,7 @@ const DevMode = () => {
   }, [autoFixEnabled, isAutoFixing, session, lastFixedError, previewFiles, projectId, toast]);
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] flex-col">
+    <div className="flex h-full flex-col">
       {/* Status bar */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
         <Circle className="h-2 w-2 fill-primary text-primary" />

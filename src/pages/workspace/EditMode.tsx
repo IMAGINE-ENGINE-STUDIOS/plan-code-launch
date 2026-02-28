@@ -590,7 +590,7 @@ const EditMode = () => {
 
   // ─── Normal Layout ───
   return (
-    <div className="h-[calc(100vh-10rem)]">
+    <div className="h-full">
       <ResizablePanelGroup direction="horizontal">
         {/* Chat Panel */}
         <ResizablePanel defaultSize={25} minSize={18}>
