@@ -356,7 +356,7 @@ const DevMode = () => {
             </div>
 
             {/* Preview */}
-            <div className="flex flex-1 items-start justify-center overflow-auto bg-muted/30 p-4">
+            <div className="flex flex-1 justify-center overflow-hidden bg-muted/30 p-4 min-h-0">
               <div
                 className="bg-background border border-border rounded-lg overflow-hidden shadow-lg transition-all duration-300 h-full"
                 style={{ width: `${Math.min(currentViewport.width, 800)}px` }}
