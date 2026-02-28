@@ -52,6 +52,7 @@ function App() {
                   <Route path="publish" element={<PublishPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                   <Route path="versions" element={<VersionHistory />} />
+                  <Route path="*" element={<Navigate to="edit" replace />} />
                 </Route>
                 <Route path="*" element={<NotFound />} />
               </Routes>
