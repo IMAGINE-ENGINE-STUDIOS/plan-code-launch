@@ -1,72 +1,76 @@
 
 
-## Plan: AI Screenshot Testing & Analysis Feature
+## Plan: Enforce Real Integrations & Block Fake Solutions
 
-### Overview
-Add a testing mode where the AI can capture screenshots of the live preview, analyze visual/functional issues using a vision-capable model, and propose code fixes that the user can approve with a single click.
+### Problem Analysis
+The AI code generator has three critical failures:
+1. When asked to integrate a library (e.g., Cesium), it creates a **visual simulation** instead of importing the real library — because the system prompt doesn't enforce real integrations strictly enough
+2. The `[NEEDS_API_KEY:KEY:desc]` marker system exists but the AI model often ignores it and hardcodes empty strings or fakes the feature
+3. The Sandpack preview's dependency list is hardcoded — even if the AI outputs correct import statements, the preview can't resolve packages not in the fixed list
 
 ### Architecture
 
 ```text
-User clicks "Test App" or asks "test this"
+User asks "integrate Cesium"
          │
          ▼
-  Capture screenshot of Sandpack preview (html2canvas)
+  System prompt BLOCKS fake implementations
+  Forces AI to output [NEEDS_DEPENDENCY:cesium] markers
          │
          ▼
-  Send base64 image + project context to new edge function
+  AI outputs [NEEDS_API_KEY:CESIUM_ION_TOKEN:...] — MUST appear before any code
          │
          ▼
-  Edge function calls Gemini 2.5 Pro (vision model)
+  Frontend detects [NEEDS_DEPENDENCY:pkg] markers
+  → Adds package to Sandpack dependency list dynamically
          │
          ▼
-  AI returns analysis + proposed code changes
+  Frontend detects [NEEDS_API_KEY:...] markers
+  → Shows SecretInput BEFORE applying code
+  → Blocks code application until key is provided
          │
          ▼
-  Render analysis in chat with [Approve Changes] button
-         │
-         ▼
-  On approve → apply file changes to preview
+  Once key saved → injects it into Sandpack env → applies code files
 ```
 
 ### Implementation Steps
 
-**1. Install html2canvas dependency**
-Add `html2canvas` package to capture the Sandpack preview iframe area as a base64 image.
+**1. Overhaul the system prompt in `supabase/functions/chat/index.ts`**
 
-**2. Create edge function `supabase/functions/test-analyze/index.ts`**
-- Accepts `{ screenshot: string (base64), projectFiles: string[], userRequest: string, projectId: string }`
-- Sends the screenshot as an image part to `google/gemini-2.5-pro` (vision-capable) via the Lovable AI gateway
-- System prompt instructs the model to: analyze the UI screenshot, identify visual bugs / layout issues / missing elements, and output proposed code fixes in the standard ```` ```tsx:path``` ```` format
-- Returns the analysis text with embedded code blocks
-- Handles 429/402 errors
+Add a new "INTEGRATION RULES" section that is the strongest-worded rule:
 
-**3. Modify `src/pages/workspace/EditMode.tsx`**
-- Add a `Camera` icon button to the preview toolbar for manual screenshot capture
-- Add a `captureScreenshot()` function that uses `html2canvas` on the preview container div and returns base64
-- Detect when user messages contain keywords like "test", "screenshot", "check", "analyze" — automatically capture a screenshot and attach it to the request
-- After AI analysis response arrives, parse it for file changes and render an **"Approve Changes"** button below the analysis
-- The approve button calls `applyFilesToPreview()` with the proposed changes
-- If not approved, changes are discarded (just text in chat)
+- **NEVER simulate or fake a library.** If the user asks to integrate Cesium, MapboxGL, Three.js, Stripe, etc., you MUST use the real library via `import` statements.
+- When a library is needed that isn't in the current dependency list, output a marker: `[NEEDS_DEPENDENCY:package-name:version]` at the TOP of your response, before any code blocks.
+- When an API key is required, output `[NEEDS_API_KEY:KEY_NAME:Description with URL to get the key]` at the TOP of your response, BEFORE any code. Do NOT write code that uses the key until the marker is emitted.
+- If you cannot integrate a library because it requires server-side setup, Node.js runtime, or native binaries, explicitly tell the user WHY instead of faking it.
+- NEVER create a "simulation", "placeholder", "mock map", or "visual approximation" of a third-party library. Either use the real thing or explain why you cannot.
 
-**4. Add approval UI component inline in chat**
-- When an assistant message is flagged as a "test analysis" (detected by a marker or by the presence of the test-analyze call), render:
-  - The analysis text (markdown)
-  - A highlighted "Approve & Apply Changes" button
-  - A "Dismiss" button
-- On approve: apply file changes, show success toast
-- On dismiss: collapse the proposal
+Also strengthen the data persistence rules:
+- For ANY data that should persist (user-created content, settings, lists), use `localStorage` at minimum. For multi-user or cross-device data, generate Supabase table schemas and CRUD operations.
+- NEVER use in-memory-only arrays as the primary data source for user-facing features. Mock data is acceptable only as seed/initial data loaded into localStorage or state on first run.
 
-### Technical Details
+**2. Add dynamic dependency injection to `SandpackPreview.tsx`**
 
-- **Vision model**: `google/gemini-2.5-pro` supports image+text input via the OpenAI-compatible API format (image_url with base64 data URI in the user message content array)
-- **Screenshot target**: The div wrapping the SandpackPreview component (not the iframe directly — html2canvas captures the rendered visual area)
-- **Message format for vision**: `{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,..." } }, { type: "text", text: "Analyze this screenshot..." }] }`
-- **Approval state**: Tracked per-message with a `pendingApproval` map keyed by message index, storing the parsed file changes until approved or dismissed
-- **Edge function config**: `verify_jwt = false` in config.toml, auth validated in code like existing `chat` function
+- Accept an optional `extraDependencies` prop: `Record<string, string>`
+- Merge `extraDependencies` into the `customSetup.dependencies` object
+- This allows EditMode to pass dynamically-detected packages to the preview
+
+**3. Add dependency and API key detection + blocking in `EditMode.tsx`**
+
+- Parse `[NEEDS_DEPENDENCY:pkg:version]` markers from assistant messages (similar to existing `[NEEDS_API_KEY]` parsing)
+- When detected, add them to a `dynamicDeps` state map that gets passed to `SandpackPreview`
+- Parse `[NEEDS_API_KEY]` markers — but now **block code application** until ALL required keys are saved
+- Track which keys are pending via a `pendingKeys` set
+- Only call `applyFilesToPreview()` after all `pendingKeys` are resolved
+- Show a clear banner: "This feature requires: CESIUM_ION_TOKEN — provide it below before changes are applied"
+
+**4. Add the same dependency detection to `DevMode.tsx`**
+
+- When auto-fix applies changes, also detect `[NEEDS_DEPENDENCY]` markers and update the Sandpack dependency list
 
 ### Files Changed
-- `package.json` — add `html2canvas`
-- `supabase/functions/test-analyze/index.ts` — new edge function
-- `src/pages/workspace/EditMode.tsx` — screenshot capture, test detection, approval UI
+- `supabase/functions/chat/index.ts` — system prompt overhaul (integration rules, data persistence rules)
+- `src/components/SandpackPreview.tsx` — accept `extraDependencies` prop, merge into Sandpack config
+- `src/pages/workspace/EditMode.tsx` — parse `[NEEDS_DEPENDENCY]` markers, block code until keys saved, pass dynamic deps
+- `src/pages/workspace/DevMode.tsx` — same dependency detection for auto-fix flow
 
