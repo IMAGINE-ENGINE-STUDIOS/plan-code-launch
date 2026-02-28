@@ -1,6 +1,6 @@
 export type ProjectStatus = 'draft' | 'imported' | 'compatible' | 'needs_attention' | 'published';
 export type SupportLevel = 'A' | 'B' | 'C';
-export type WorkspaceTab = 'plan' | 'edit' | 'chat' | 'dev' | 'analysis' | 'publish' | 'settings' | 'versions';
+export type WorkspaceTab = 'edit' | 'chat' | 'dev' | 'analysis' | 'publish' | 'settings' | 'versions';
 
 export interface Project {
   id: string;

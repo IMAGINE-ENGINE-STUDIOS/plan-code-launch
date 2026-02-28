@@ -21,6 +21,7 @@ import SandpackPreview from '@/components/SandpackPreview';
 import CodeViewer from '@/components/CodeViewer';
 import CommandQueue from '@/components/CommandQueue';
 import SecretInput from '@/components/SecretInput';
+import PlanPanel from '@/components/PlanPanel';
 import { parseFileChanges, hasFileChanges } from '@/lib/parse-file-changes';
 import { stripCodeBlocks } from '@/lib/strip-code-blocks';
 import { parseDependencyMarkers, parseApiKeyMarkers } from '@/lib/parse-markers';
@@ -74,6 +75,7 @@ const EditMode = () => {
   const [dynamicDeps, setDynamicDeps] = useState<Record<string, string>>({});
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set());
   const [blockedContent, setBlockedContent] = useState<string | null>(null);
+  const [leftPanel, setLeftPanel] = useState<'chat' | 'plan'>('chat');
   const autoFixCountRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<(text: string) => Promise<void>>();
@@ -622,14 +624,40 @@ const EditMode = () => {
         <ResizablePanel defaultSize={35} minSize={20}>
           <div className="flex h-full flex-col">
             <div className="flex items-center justify-between border-b border-border px-4 py-2">
-              <span className="text-sm font-semibold">AI Chat</span>
-              {messages.length > 0 && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setLeftPanel('chat')}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${leftPanel === 'chat' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  Chat
+                </button>
+                <button
+                  onClick={() => setLeftPanel('plan')}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${leftPanel === 'plan' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  Plan
+                </button>
+              </div>
+              {leftPanel === 'chat' && messages.length > 0 && (
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={clearChat}>
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               )}
             </div>
 
+            {leftPanel === 'plan' ? (
+              <PlanPanel
+                projectId={projectId!}
+                projectName={project?.name}
+                projectDescription={project?.description}
+                onBuildPlan={(planQueue) => {
+                  setQueue(prev => [...prev, ...planQueue]);
+                  setLeftPanel('chat');
+                  toast({ title: 'Plan queued', description: `${planQueue.length} tasks added to build queue` });
+                }}
+              />
+            ) : (
+            <>
             <ScrollArea className="flex-1 p-4">
               {messages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center gap-4 py-12">
@@ -795,11 +823,11 @@ const EditMode = () => {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" side="top" className="w-44">
-                    <DropdownMenuItem onClick={() => navigate('../chat')} className="gap-2 text-xs">
+                     <DropdownMenuItem onClick={() => navigate('../chat')} className="gap-2 text-xs">
                       <MessageCircle className="h-3.5 w-3.5" /> Chat Mode
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => navigate('../plan')} className="gap-2 text-xs">
-                      <ClipboardList className="h-3.5 w-3.5" /> Plan Mode
+                    <DropdownMenuItem onClick={() => setLeftPanel('plan')} className="gap-2 text-xs">
+                      <ClipboardList className="h-3.5 w-3.5" /> Plan Features
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => { toggleSelectMode(); }} className="gap-2 text-xs">
                       <Pencil className="h-3.5 w-3.5" /> Visual Edit
@@ -808,6 +836,8 @@ const EditMode = () => {
                 </DropdownMenu>
               </div>
             </div>
+            </>
+            )}
           </div>
         </ResizablePanel>
 
