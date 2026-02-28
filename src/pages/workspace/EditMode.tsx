@@ -818,8 +818,8 @@ const EditMode = () => {
               </div>
             )}
 
-            <div className="flex flex-1 flex-col overflow-hidden">
-            <div className="flex flex-1 items-start justify-center overflow-hidden bg-muted/20 p-2">
+            <div className="flex flex-1 flex-col overflow-hidden min-h-0">
+            <div className="flex flex-1 justify-center overflow-hidden bg-muted/20 p-2 min-h-0">
                 <div ref={previewContainerRef} className="h-full overflow-hidden rounded-lg border border-border transition-all duration-300" style={{ width: vp.width, maxWidth: '100%' }}>
                   {project ? (
                     <SandpackPreview files={previewFiles} projectName={project.name} onError={handlePreviewError} />

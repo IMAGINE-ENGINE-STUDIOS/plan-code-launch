@@ -364,11 +364,13 @@ export default function SandpackPreview({ files, projectName, onError }: Sandpac
       }}
     >
       <ErrorListener onError={onError} />
-      <SandpackPreviewPanel
-        showOpenInCodeSandbox={false}
-        showRefreshButton={true}
-        style={{ height: '100%' }}
-      />
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <SandpackPreviewPanel
+          showOpenInCodeSandbox={false}
+          showRefreshButton={true}
+          style={{ flex: 1, minHeight: 0 }}
+        />
+      </div>
     </SandpackProvider>
   );
 }
