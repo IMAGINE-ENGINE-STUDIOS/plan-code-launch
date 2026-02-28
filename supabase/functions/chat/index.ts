@@ -265,6 +265,19 @@ Utilities:
 Charts: recharts
 Notifications: sonner (toast)
 
+3D / WebGL (use for any 3D scenes, games, or WebGL features):
+  three (Three.js core), @react-three/fiber (React renderer for Three.js — use <Canvas>),
+  @react-three/drei (helpers: OrbitControls, Text3D, Environment, useGLTF, Stars, Sky, etc.)
+
+  3D GUIDELINES:
+  - Always wrap 3D content in <Canvas> from @react-three/fiber
+  - Use drei helpers for common needs: OrbitControls, PerspectiveCamera, Environment
+  - For games: use useFrame() for game loops, drei Physics helpers for collisions
+  - For lighting: <ambientLight>, <pointLight>, <directionalLight>
+  - For models: useGLTF from drei to load .glb/.gltf files
+  - Standard meshes: <mesh>, <boxGeometry>, <sphereGeometry>, <planeGeometry>
+  - Materials: <meshStandardMaterial>, <meshPhongMaterial>, <meshBasicMaterial>
+
 PREFERENCES:
 - Use @radix-ui primitives for accessible dialogs, popovers, selects, etc.
 - Use react-hook-form + zod for ALL forms (validation, error handling)
