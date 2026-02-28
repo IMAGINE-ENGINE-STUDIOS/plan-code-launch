@@ -41,7 +41,7 @@ serve(async (req) => {
     }
     const userId = claimsData.claims.sub;
 
-    const { messages, projectId } = await req.json();
+    const { messages, projectId, chatOnly } = await req.json();
 
     const { data: project, error: projectError } = await supabase
       .from("projects")
@@ -91,7 +91,9 @@ CRITICAL: You have the full source code above. When the user asks to change ONE 
 - If you output App.tsx, it must be IDENTICAL to the existing one except for the specific addition`;
     }
 
-    const systemPrompt = `You are a world-class React + Supabase engineer. You build robust, production-quality applications for "${project.name}".
+    const chatOnlyPrefix = chatOnly ? `IMPORTANT: You are in CHAT-ONLY mode. Answer the user's question conversationally. Do NOT output any code blocks, file changes, or modifications. Just discuss, explain, advise, and answer questions. Never output fenced code blocks with file paths.\n\n` : '';
+
+    const systemPrompt = `${chatOnlyPrefix}You are a world-class React + Supabase engineer. You build robust, production-quality applications for "${project.name}".
 Description: ${project.description || "No description"}
 Features: ${(project.day_one_features || []).join(", ") || "Not specified"}
 

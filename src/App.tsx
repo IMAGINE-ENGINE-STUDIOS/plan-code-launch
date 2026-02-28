@@ -21,6 +21,7 @@ import AnalysisMode from "./pages/workspace/AnalysisMode";
 import PublishPage from "./pages/workspace/PublishPage";
 import SettingsPage from "./pages/workspace/SettingsPage";
 import VersionHistory from "./pages/workspace/VersionHistory";
+import ChatMode from "./pages/workspace/ChatMode";
 import CostsPage from "./pages/CostsPage";
 import NotFound from "./pages/NotFound";
 
@@ -47,6 +48,7 @@ function App() {
                   <Route index element={<Navigate to="dev" replace />} />
                   <Route path="plan" element={<PlanMode />} />
                   <Route path="edit" element={<EditMode />} />
+                  <Route path="chat" element={<ChatMode />} />
                   <Route path="dev" element={<DevMode />} />
                   <Route path="analysis" element={<AnalysisMode />} />
                   <Route path="publish" element={<PublishPage />} />
