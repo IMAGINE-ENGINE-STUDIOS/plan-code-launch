@@ -10,6 +10,7 @@ interface SandpackPreviewProps {
   files: Record<string, string>;
   projectName: string;
   onError?: (error: string) => void;
+  extraDependencies?: Record<string, string>;
 }
 
 // ─── Error Listener (must be inside SandpackProvider) ───
@@ -275,7 +276,7 @@ const DEFAULT_APP = `export default function App() {
   );
 }`;
 
-export default function SandpackPreview({ files, projectName, onError }: SandpackPreviewProps) {
+export default function SandpackPreview({ files, projectName, onError, extraDependencies }: SandpackPreviewProps) {
   const sandpackFiles = useMemo(() => {
     const merged: Record<string, string> = {
       '/public/index.html': BASE_HTML,
@@ -350,6 +351,7 @@ export default function SandpackPreview({ files, projectName, onError }: Sandpac
           'recharts': '^2.15.0',
           'sonner': '^1.7.0',
           'cmdk': '^1.0.0',
+          ...(extraDependencies || {}),
         },
         entry: '/src/index.tsx',
       }}
