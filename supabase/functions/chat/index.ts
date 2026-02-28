@@ -11,7 +11,128 @@ const MODEL_COSTS: Record<string, { input: number; output: number }> = {
   "google/gemini-3-flash-preview": { input: 0.15, output: 0.60 },
   "google/gemini-2.5-flash": { input: 0.15, output: 0.60 },
   "google/gemini-2.5-pro": { input: 1.25, output: 5.00 },
+  "gemini-3-flash-preview": { input: 0.15, output: 0.60 },
+  "gemini-2.5-flash": { input: 0.15, output: 0.60 },
+  "gemini-2.5-pro": { input: 1.25, output: 5.00 },
 };
+
+// ─── Gemini Direct API Helpers ───
+
+function toGeminiModelName(model: string): string {
+  return model.startsWith("google/") ? model.replace("google/", "") : model;
+}
+
+function toOpenAIModelName(model: string): string {
+  return model.startsWith("google/") ? model : `google/${model}`;
+}
+
+function openAIMessagesToGemini(systemPrompt: string, messages: Array<{ role: string; content: any }>) {
+  const contents: Array<{ role: string; parts: any[] }> = [];
+  for (const msg of messages) {
+    const role = msg.role === "assistant" ? "model" : "user";
+    if (typeof msg.content === "string") {
+      contents.push({ role, parts: [{ text: msg.content }] });
+    } else if (Array.isArray(msg.content)) {
+      const parts: any[] = [];
+      for (const item of msg.content) {
+        if (item.type === "text") parts.push({ text: item.text });
+        else if (item.type === "image_url") {
+          const url = item.image_url?.url || "";
+          if (url.startsWith("data:")) {
+            const match = url.match(/^data:([^;]+);base64,(.+)$/);
+            if (match) parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+          }
+        }
+      }
+      contents.push({ role, parts });
+    }
+  }
+  return {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    generationConfig: { temperature: 0.7 },
+  };
+}
+
+function geminiSSEToOpenAIStream(geminiStream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = geminiStream.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  let usageData: any = null;
+
+  return new ReadableStream({
+    async pull(controller) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          // Flush remaining buffer
+          if (buffer.trim()) {
+            for (const line of buffer.split("\n")) {
+              const chunk = processGeminiLine(line);
+              if (chunk) controller.enqueue(encoder.encode(chunk));
+            }
+          }
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 1);
+          const chunk = processGeminiLine(line);
+          if (chunk) {
+            controller.enqueue(encoder.encode(chunk));
+            return; // yield control
+          }
+        }
+      }
+    },
+  });
+
+  function processGeminiLine(line: string): string | null {
+    if (!line.startsWith("data: ")) return null;
+    const jsonStr = line.slice(6).trim();
+    if (!jsonStr || jsonStr === "[DONE]") return null;
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (parsed.usageMetadata) {
+        usageData = parsed.usageMetadata;
+      }
+      if (text) {
+        const openAIChunk = {
+          choices: [{ delta: { content: text }, index: 0 }],
+          ...(usageData ? {
+            usage: {
+              prompt_tokens: usageData.promptTokenCount || 0,
+              completion_tokens: usageData.candidatesTokenCount || 0,
+              total_tokens: usageData.totalTokenCount || 0,
+            },
+          } : {}),
+        };
+        return `data: ${JSON.stringify(openAIChunk)}\n\n`;
+      }
+      // Send usage on final chunk even without text
+      if (usageData && parsed.candidates?.[0]?.finishReason) {
+        const openAIChunk = {
+          choices: [{ delta: {}, index: 0, finish_reason: "stop" }],
+          usage: {
+            prompt_tokens: usageData.promptTokenCount || 0,
+            completion_tokens: usageData.candidatesTokenCount || 0,
+            total_tokens: usageData.totalTokenCount || 0,
+          },
+        };
+        return `data: ${JSON.stringify(openAIChunk)}\n\n`;
+      }
+    } catch { /* ignore partial JSON */ }
+    return null;
+  }
+}
+
+// ─── Main Handler ───
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -45,7 +166,7 @@ serve(async (req) => {
 
     const { data: project, error: projectError } = await supabase
       .from("projects")
-      .select("name, description, stack, day_one_features, status, source_repo")
+      .select("name, description, stack, day_one_features, status, source_repo, ai_model")
       .eq("id", projectId)
       .eq("user_id", userId)
       .single();
@@ -63,11 +184,17 @@ serve(async (req) => {
     );
     const { data: secrets } = await serviceClient
       .from("project_secrets")
-      .select("key")
+      .select("key, value")
       .eq("project_id", projectId);
-    const configuredKeys = (secrets || []).map((s: any) => s.key);
+    const secretsMap: Record<string, string> = {};
+    (secrets || []).forEach((s: any) => { secretsMap[s.key] = s.value; });
+    const configuredKeys = Object.keys(secretsMap);
 
-    // Load FULL file contents for context (not just paths)
+    // Determine AI provider
+    const geminiApiKey = secretsMap["GOOGLE_GEMINI_API_KEY"] || Deno.env.get("GOOGLE_GEMINI_API_KEY");
+    const useGemini = !!geminiApiKey;
+
+    // Load FULL file contents for context
     let fileContext = "";
     const { data: projectFiles } = await supabase
       .from("project_files")
@@ -75,9 +202,7 @@ serve(async (req) => {
       .eq("project_id", projectId);
     
     if (projectFiles && projectFiles.length > 0) {
-      // Build full file context — include content for AI to understand existing code
       const fileEntries = projectFiles.map((f: any) => {
-        // Truncate very large files to avoid context overflow
         const content = f.content.length > 4000 ? f.content.slice(0, 4000) + "\n// ... (truncated)" : f.content;
         return `\n--- ${f.file_path} ---\n${content}`;
       });
@@ -150,232 +275,189 @@ PREFERENCES:
 RULE 0 — REAL INTEGRATIONS ONLY (HIGHEST PRIORITY)
 ███████████████████████████████████████████
 
-This is the MOST IMPORTANT rule. Violating it is an IMMEDIATE, CRITICAL FAILURE.
-
 A. NEVER SIMULATE, FAKE, OR APPROXIMATE A THIRD-PARTY LIBRARY.
-   - If the user asks to integrate Cesium, MapboxGL, Three.js, Stripe, D3, Leaflet,
-     Chart.js, PixiJS, Babylon.js, or ANY other library, you MUST use the REAL library
-     via real \`import\` statements.
-   - NEVER create a "simulation", "placeholder", "visual approximation", "mock map",
-     "canvas drawing that looks like a map", or ANY substitute for a real library.
-   - NEVER draw shapes, gradients, or static images to simulate what a library renders.
-   - If you catch yourself writing code that doesn't import the actual library the user
-     requested, STOP and follow the rules below instead.
-
-B. DEPENDENCY DECLARATION — MANDATORY:
-   When a library is needed that isn't already imported in the project, you MUST output
-   this marker at the TOP of your response, BEFORE any code blocks:
-   [NEEDS_DEPENDENCY:package-name:version]
-   Examples:
-   [NEEDS_DEPENDENCY:cesium:^1.119.0]
-   [NEEDS_DEPENDENCY:three:^0.168.0]
-   [NEEDS_DEPENDENCY:@react-three/fiber:^8.17.0]
-   [NEEDS_DEPENDENCY:mapbox-gl:^3.7.0]
-   [NEEDS_DEPENDENCY:leaflet:^1.9.4]
-   You may output MULTIPLE markers, one per line.
-
-C. API KEY DECLARATION — MANDATORY:
-   When a library requires an API key or access token, you MUST output this marker
-   at the TOP of your response, BEFORE any code blocks:
-   [NEEDS_API_KEY:KEY_NAME:Description of where to get it (include URL)]
-   Examples:
-   [NEEDS_API_KEY:CESIUM_ION_TOKEN:Get your free token at https://ion.cesium.com/tokens]
-   [NEEDS_API_KEY:MAPBOX_ACCESS_TOKEN:Get your token at https://account.mapbox.com/access-tokens/]
-   DO NOT write code that uses the API key until this marker has been emitted.
-   The user's environment will block code application until they provide the key.
-
-D. IF YOU CANNOT INTEGRATE A LIBRARY:
-   - If a library requires server-side setup, Node.js runtime, native binaries, or WASM
-     that cannot run in a browser sandbox, EXPLICITLY TELL THE USER WHY.
-   - Say "I cannot integrate X because it requires Y. Here's what you'd need to do…"
-   - NEVER silently fall back to a fake implementation.
-
-E. MARKER ORDER: [NEEDS_DEPENDENCY] markers first, then [NEEDS_API_KEY] markers,
-   then your one-line summary, then code blocks.
+B. DEPENDENCY DECLARATION — MANDATORY: [NEEDS_DEPENDENCY:package-name:version]
+C. API KEY DECLARATION — MANDATORY: [NEEDS_API_KEY:KEY_NAME:Description]
+D. IF YOU CANNOT INTEGRATE A LIBRARY: TELL THE USER WHY.
+E. MARKER ORDER: [NEEDS_DEPENDENCY] first, then [NEEDS_API_KEY], then code.
 
 ═══════════════════════════════════════════
 ABSOLUTE RULES — NEVER VIOLATE
 ═══════════════════════════════════════════
 
 1. NO BROWSER DIALOGS — EVER
-   - NEVER use alert(), confirm(), prompt(), or window.alert/confirm/prompt
-   - Instead: use toast notifications, inline messages, or modal components
-   - For confirmations: use a custom modal/dialog with "Confirm" and "Cancel" buttons
-   - For alerts: use a toast notification or an inline banner
-   - This is a HARD RULE — any use of alert/confirm/prompt is a critical failure
-
 2. EVERY BUTTON MUST WORK
-   - Every button, link, and interactive element MUST have a real, working handler
-   - No onClick={() => {}} or onClick={() => alert('...')} — ever
-   - If a feature needs backend data, implement it with Supabase or realistic state management
-   - If a button opens a modal, BUILD the modal with full form/content
-   - If a button navigates, use react-router-dom navigate() or <Link>
-   - If a button submits data, implement the full create/update/delete flow
-   - If you genuinely cannot implement a feature yet, DON'T render the button at all
-
 3. BUILD WITH REAL DATA PERSISTENCE
-   - For ANY data that should persist (user-created content, settings, lists, preferences),
-     use localStorage at MINIMUM. For multi-user or cross-device data, use Supabase tables.
-   - NEVER use in-memory-only arrays as the primary data source for user-facing features.
-   - Mock/seed data is acceptable ONLY as initial data loaded into localStorage or state on first run.
-   - For any CRUD feature: implement full create, read, update, delete with real state management
-   - Forms must validate inputs, show loading states, handle errors, and show success feedback
-   - Lists must handle: loading skeleton, empty state, error state, populated state
-   - Implement optimistic updates where appropriate
-
 4. PROTECT EXISTING CODE — HIGHEST PRIORITY
-   - ONLY output files that are directly related to the user's request
-   - NEVER re-output files that don't need changes
-   - If you must modify a file (e.g. App.tsx to add a route), preserve EVERYTHING existing
-   - NEVER change: app name, titles, hero text, descriptions, branding, colors, copy, existing routes, existing components
-   - NEVER remove, rename, or reorganize existing code
-   - NEVER restyle existing pages or sections unless explicitly asked
-   - When in doubt, DON'T touch the file
-
 5. COMPLETE IMPLEMENTATIONS ONLY
-   - Every feature must be fully implemented on delivery — not a skeleton
-   - Include all states: loading, empty, error, success, hover, active, disabled
-   - Include realistic mock data (10+ items for lists)
-   - Include proper TypeScript types for all data structures
-   - Include proper error handling with try/catch in async operations
-   - Include proper form validation with user feedback
-   - Multi-page features need ALL pages with working routing
 
 OUTPUT FORMAT:
-1. Output [NEEDS_DEPENDENCY] and [NEEDS_API_KEY] markers FIRST (if any)
-2. Then a ONE-LINE summary: "Created N files: FileName.tsx, FileName.tsx"
-3. Output complete files using: \`\`\`tsx:src/path/File.tsx
-4. Always output COMPLETE file contents — never partial
-5. Keep explanations to 1-2 sentences MAX
-6. ONLY output files you are CREATING or MODIFYING
-
-INTERACTIVE PATTERNS (use these instead of browser dialogs):
-- Confirmation: Build a Dialog/Modal component with confirm/cancel buttons
-- Notifications: Use toast() from sonner or a custom Toast component
-- Form feedback: Inline success/error messages below the form
-- Delete confirmation: "Are you sure?" modal with item details
-- Loading: Skeleton UI or spinner with descriptive text
-- Empty states: Illustrated message with CTA button
-
-ROBUST FEATURE PATTERNS:
-- Lists: Search/filter bar, sort options, pagination, empty state, loading skeleton
-- Forms: Labeled inputs, validation, error messages, submit loading, success toast
-- Modals: Proper open/close state, form inside, cancel/submit buttons, loading state
-- Navigation: Active route highlighting, mobile responsive menu, proper <Link> usage
-- Data tables: Column headers, row actions (edit/delete with real handlers), responsive scroll
-- Auth flows: Login/signup forms with validation, error handling, redirect on success
+1. Output markers FIRST (if any)
+2. ONE-LINE summary
+3. Complete files using: \`\`\`tsx:src/path/File.tsx
+4. ONLY output files you are CREATING or MODIFYING
 
 API KEY HANDLING:
-- When a feature requires an external API key, output: [NEEDS_API_KEY:KEY_NAME:Description]
 - Currently configured: ${configuredKeys.length > 0 ? configuredKeys.join(", ") : "None"}
-- If a key is already configured, use it directly
-
-CODE QUALITY:
-- className not class
-- Tailwind for ALL styling — no inline styles
-- Dark theme: bg-gray-950 base, bg-gray-900/800 cards, text-white/gray-300/400/500
-- Every component responsive (mobile-first with sm: md: lg: breakpoints)
-- Proper TypeScript types — no \`any\`
-- lucide-react icons (import individually)
-- framer-motion animations where appropriate
-- Semantic HTML (nav, main, section, article, footer)
-- All interactive elements need hover/focus/active states
 ${fileContext}
 `;
-    const modelName = "google/gemini-3-flash-preview";
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages,
-        ],
-        stream: true,
-      }),
-    });
+    const modelName = (project as any).ai_model || "google/gemini-3-flash-preview";
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again later." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (useGemini) {
+      // ─── Direct Gemini API ───
+      const geminiModel = toGeminiModelName(modelName);
+      const geminiBody = openAIMessagesToGemini(systemPrompt, messages);
+      
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:streamGenerateContent?alt=sse&key=${geminiApiKey}`;
+
+      const response = await fetch(geminiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(geminiBody),
+      });
+
+      if (!response.ok) {
+        const t = await response.text();
+        console.error("Gemini API error:", response.status, t);
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again later." }), {
+            status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ error: "Gemini API error: " + response.status }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add credits in Settings → Workspace → Usage." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+
+      // Transform Gemini SSE to OpenAI SSE format
+      const openAIStream = geminiSSEToOpenAIStream(response.body!);
+
+      // Tee the stream for usage logging
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const reader = openAIStream.getReader();
+
+      (async () => {
+        let usageData: any = null;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await writer.write(value);
+            // Parse for usage data
+            const text = new TextDecoder().decode(value);
+            for (const line of text.split("\n")) {
+              if (!line.startsWith("data: ") || line.includes("[DONE]")) continue;
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                if (parsed.usage) usageData = parsed.usage;
+              } catch {}
+            }
+          }
+        } catch (e) { console.error("stream relay error:", e); }
+        finally { await writer.close(); }
+
+        // Log usage
+        try {
+          const promptTokens = usageData?.prompt_tokens ?? 0;
+          const completionTokens = usageData?.completion_tokens ?? 0;
+          const totalTokens = usageData?.total_tokens ?? (promptTokens + completionTokens);
+          const costs = MODEL_COSTS[geminiModel] || MODEL_COSTS[modelName] || { input: 0.15, output: 0.60 };
+          const estimatedCost = (promptTokens / 1_000_000) * costs.input + (completionTokens / 1_000_000) * costs.output;
+          await serviceClient.from("usage_logs").insert({
+            project_id: projectId, user_id: userId, model: modelName,
+            prompt_tokens: promptTokens, completion_tokens: completionTokens,
+            total_tokens: totalTokens, estimated_cost: estimatedCost,
+          });
+        } catch (logErr) { console.error("Failed to log usage:", logErr); }
+      })();
+
+      return new Response(readable, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      });
+
+    } else {
+      // ─── Lovable Gateway (fallback) ───
+      const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+      if (!LOVABLE_API_KEY) throw new Error("No AI provider configured. Add a GOOGLE_GEMINI_API_KEY in project secrets or ensure LOVABLE_API_KEY is set.");
+
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...messages,
+          ],
+          stream: true,
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again later." }), {
+            status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (response.status === 402) {
+          return new Response(JSON.stringify({ error: "AI credits exhausted. Please add credits in Settings → Workspace → Usage." }), {
+            status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const t = await response.text();
+        console.error("AI gateway error:", response.status, t);
+        return new Response(JSON.stringify({ error: "AI gateway error" }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const t = await response.text();
-      console.error("AI gateway error:", response.status, t);
-      return new Response(JSON.stringify({ error: "AI gateway error" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+
+      (async () => {
+        let usageData: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await writer.write(value);
+            const text = decoder.decode(value, { stream: true });
+            for (const line of text.split("\n")) {
+              if (!line.startsWith("data: ") || line.includes("[DONE]")) continue;
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                if (parsed.usage) usageData = parsed.usage;
+              } catch {}
+            }
+          }
+        } catch (e) { console.error("stream relay error:", e); }
+        finally { await writer.close(); }
+
+        try {
+          const promptTokens = usageData?.prompt_tokens ?? 0;
+          const completionTokens = usageData?.completion_tokens ?? 0;
+          const totalTokens = usageData?.total_tokens ?? (promptTokens + completionTokens);
+          const costs = MODEL_COSTS[modelName] || { input: 0.15, output: 0.60 };
+          const estimatedCost = (promptTokens / 1_000_000) * costs.input + (completionTokens / 1_000_000) * costs.output;
+          await serviceClient.from("usage_logs").insert({
+            project_id: projectId, user_id: userId, model: modelName,
+            prompt_tokens: promptTokens, completion_tokens: completionTokens,
+            total_tokens: totalTokens, estimated_cost: estimatedCost,
+          });
+        } catch (logErr) { console.error("Failed to log usage:", logErr); }
+      })();
+
+      return new Response(readable, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
       });
     }
-
-    const { readable, writable } = new TransformStream();
-    const writer = writable.getWriter();
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-
-    (async () => {
-      let usageData: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          await writer.write(value);
-          const text = decoder.decode(value, { stream: true });
-          for (const line of text.split("\n")) {
-            if (!line.startsWith("data: ") || line.includes("[DONE]")) continue;
-            try {
-              const parsed = JSON.parse(line.slice(6));
-              if (parsed.usage) {
-                usageData = parsed.usage;
-              }
-            } catch { /* partial JSON, ignore */ }
-          }
-        }
-      } catch (e) {
-        console.error("stream relay error:", e);
-      } finally {
-        await writer.close();
-      }
-
-      try {
-        const promptTokens = usageData?.prompt_tokens ?? 0;
-        const completionTokens = usageData?.completion_tokens ?? 0;
-        const totalTokens = usageData?.total_tokens ?? (promptTokens + completionTokens);
-        const costs = MODEL_COSTS[modelName] || { input: 0.15, output: 0.60 };
-        const estimatedCost = (promptTokens / 1_000_000) * costs.input + (completionTokens / 1_000_000) * costs.output;
-
-        await serviceClient.from("usage_logs").insert({
-          project_id: projectId,
-          user_id: userId,
-          model: modelName,
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: totalTokens,
-          estimated_cost: estimatedCost,
-        });
-      } catch (logErr) {
-        console.error("Failed to log usage:", logErr);
-      }
-    })();
-
-    return new Response(readable, {
-      headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-    });
   } catch (e) {
     console.error("chat error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
