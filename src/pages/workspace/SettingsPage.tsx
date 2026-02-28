@@ -222,13 +222,13 @@ const SettingsPage = () => {
           {hasGeminiKey ? (
             <Badge variant="outline" className="bg-primary/10 text-primary text-[10px]">Gemini Direct</Badge>
           ) : (
-            <Badge variant="outline" className="text-[10px]">Lovable Gateway</Badge>
+            <Badge variant="outline" className="text-[10px]">Default Gateway</Badge>
           )}
         </div>
         <p className="text-sm text-muted-foreground mb-4">
           {hasGeminiKey
             ? 'AI calls use your Google Gemini API key directly — fully independent, no gateway dependency.'
-            : 'AI calls route through the Lovable gateway. Add a Gemini API key to go fully independent.'}
+            : 'AI calls route through the default gateway. Add a Gemini API key to go fully independent.'}
         </p>
 
         {!hasGeminiKey && (

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { Layers, Mail, Lock, User, Loader2 } from 'lucide-react';
+import { Mail, Lock, User, Loader2 } from 'lucide-react';
+import logo from '@/assets/logo.png';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -55,10 +56,8 @@ const Auth = () => {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm">
         <Link to="/" className="mb-8 flex items-center justify-center gap-2 font-display text-xl font-bold">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-            <Layers className="h-5 w-5 text-primary-foreground" />
-          </div>
-          BuildStack
+          <img src={logo} alt="Imagine Engine" className="h-9 w-9 rounded-lg" />
+          Imagine Engine
         </Link>
 
         <div className="rounded-lg border border-border bg-card p-6">

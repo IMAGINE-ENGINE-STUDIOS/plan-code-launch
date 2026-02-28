@@ -4,6 +4,7 @@ import { Sparkles, Code2, BarChart3, Rocket, GitBranch, Shield, Zap } from 'luci
 import { Button } from '@/components/ui/button';
 import Navbar from '@/components/Navbar';
 import heroBg from '@/assets/hero-bg.jpg';
+import logo from '@/assets/logo.png';
 
 const features = [
   { icon: Sparkles, title: 'Plan Mode', desc: 'AI generates structured app plans from your idea in seconds.' },
@@ -21,17 +22,18 @@ const fade = (delay: number) => ({
 });
 
 const Index = () => (
-  <div className="min-h-screen bg-background">
+  <div className="min-h-screen space-bg">
     <Navbar />
 
     {/* Hero */}
     <section className="relative overflow-hidden">
       <div className="absolute inset-0 z-0">
-        <img src={heroBg} alt="" className="h-full w-full object-cover opacity-30" />
-        <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/80 to-background" />
+        <img src={heroBg} alt="" className="h-full w-full object-cover opacity-20" />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/70 to-background" />
       </div>
       <div className="container relative z-10 flex flex-col items-center py-24 text-center md:py-36">
-        <motion.div {...fade(0)} className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary">
+        <motion.img {...fade(0)} src={logo} alt="Imagine Engine" className="mb-6 h-20 w-20 md:h-24 md:w-24 drop-shadow-[0_0_30px_hsl(168_70%_45%/0.4)]" />
+        <motion.div {...fade(0.05)} className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary">
           <Zap className="h-3.5 w-3.5" /> AI-Powered App Builder
         </motion.div>
         <motion.h1 {...fade(0.1)} className="font-display text-4xl font-bold leading-tight md:text-6xl lg:text-7xl">
@@ -42,7 +44,7 @@ const Index = () => (
         <motion.p {...fade(0.2)} className="mt-6 max-w-xl text-lg text-muted-foreground">
           From idea to production in minutes. Plan with AI, edit with diffs, analyze for quality, and deploy instantly.
         </motion.p>
-        <motion.div {...fade(0.3)} className="mt-8 flex gap-3">
+        <motion.div {...fade(0.3)} className="mt-8 flex flex-col sm:flex-row gap-3">
           <Button size="lg" asChild>
             <Link to="/new-project">Start Building</Link>
           </Button>
@@ -91,7 +93,7 @@ const Index = () => (
 
     {/* Footer */}
     <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground">
-      <p>© 2026 BuildStack. Built with AI.</p>
+      <p>© 2026 Imagine Engine. Developed by Ricardo Font.</p>
     </footer>
   </div>
 );
