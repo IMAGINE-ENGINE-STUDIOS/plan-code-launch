@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Send, Trash2, Loader2, Sparkles, CheckCircle2,
   Maximize2, Minimize2, Monitor, Tablet, Smartphone, Terminal, X, MousePointer2, AlertTriangle, Wrench,
-  Camera, FlaskConical, Check, XCircle,
+  Camera, FlaskConical, Check, XCircle, Plus, MessageCircle, ClipboardList, Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
@@ -47,6 +50,7 @@ const VIEWPORTS: Viewport[] = [
 
 const EditMode = () => {
   const { id: projectId } = useParams();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const { toast } = useToast();
@@ -767,21 +771,41 @@ const EditMode = () => {
                 </p>
               )}
               <div className="mt-2 flex items-center justify-between">
-                <button
-                  onClick={() => setAutoFixEnabled(prev => !prev)}
-                  className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
-                    autoFixEnabled ? 'bg-primary/10 text-primary' : 'bg-muted/50 text-muted-foreground'
-                  }`}
-                >
-                  <Wrench className="h-3 w-3" />
-                  Auto-fix {autoFixEnabled ? 'ON' : 'OFF'}
-                </button>
-                {autoFixCountRef.current > 0 && (
-                  <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                    <AlertTriangle className="h-3 w-3" />
-                    {autoFixCountRef.current}/{MAX_AUTO_FIXES} fixes used
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setAutoFixEnabled(prev => !prev)}
+                    className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+                      autoFixEnabled ? 'bg-primary/10 text-primary' : 'bg-muted/50 text-muted-foreground'
+                    }`}
+                  >
+                    <Wrench className="h-3 w-3" />
+                    Auto-fix {autoFixEnabled ? 'ON' : 'OFF'}
+                  </button>
+                  {autoFixCountRef.current > 0 && (
+                    <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <AlertTriangle className="h-3 w-3" />
+                      {autoFixCountRef.current}/{MAX_AUTO_FIXES} fixes used
+                    </span>
+                  )}
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-7 w-7">
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="top" className="w-44">
+                    <DropdownMenuItem onClick={() => navigate('../chat')} className="gap-2 text-xs">
+                      <MessageCircle className="h-3.5 w-3.5" /> Chat Mode
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate('../plan')} className="gap-2 text-xs">
+                      <ClipboardList className="h-3.5 w-3.5" /> Plan Mode
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { toggleSelectMode(); }} className="gap-2 text-xs">
+                      <Pencil className="h-3.5 w-3.5" /> Visual Edit
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           </div>
