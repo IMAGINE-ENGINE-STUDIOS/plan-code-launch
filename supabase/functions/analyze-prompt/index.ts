@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,20 +7,31 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function toGeminiModelName(model: string): string {
+  return model.startsWith("google/") ? model.replace("google/", "") : model;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { prompt } = await req.json();
+    const { prompt, projectId } = await req.json();
     if (!prompt || typeof prompt !== "string") {
       return new Response(JSON.stringify({ error: "prompt is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    // Check for project-level Gemini key
+    let geminiApiKey = Deno.env.get("GOOGLE_GEMINI_API_KEY") || "";
+    if (projectId) {
+      try {
+        const serviceClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+        const { data: secrets } = await serviceClient.from("project_secrets").select("key, value").eq("project_id", projectId);
+        const projectKey = (secrets || []).find((s: any) => s.key === "GOOGLE_GEMINI_API_KEY");
+        if (projectKey) geminiApiKey = projectKey.value;
+      } catch {}
+    }
 
     const systemPrompt = `You are a project intake analyzer. Given a user's project description, extract what you can determine and identify what's missing.
 
@@ -33,7 +45,7 @@ Return a JSON object with this exact structure:
     "projectName": "<a short descriptive name for the project>" or null,
     "description": "<a one-sentence summary of what they want to build>" or null
   },
-  "missingQuestions": ["buildType", "codeSource", "priorities", "dayOneFeatures"] // only include keys where the value is null or empty
+  "missingQuestions": ["buildType", "codeSource", "priorities", "dayOneFeatures"]
 }
 
 Rules:
@@ -46,58 +58,86 @@ Rules:
 - Always generate a projectName and description
 - Return ONLY the JSON, no markdown fences`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ],
-        stream: false,
-      }),
-    });
+    let content = "";
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    if (geminiApiKey) {
+      // ─── Direct Gemini API ───
+      const geminiModel = toGeminiModelName("google/gemini-3-flash-preview");
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const t = await response.text();
+        console.error("Gemini API error:", response.status, t);
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again." }), {
+            status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        throw new Error("Gemini API error: " + response.status);
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+
+      const data = await response.json();
+      content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    } else {
+      // ─── Lovable Gateway (fallback) ───
+      const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+      if (!LOVABLE_API_KEY) throw new Error("No AI provider configured");
+
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-3-flash-preview",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: prompt },
+          ],
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again." }), {
+            status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (response.status === 402) {
+          return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
+            status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const t = await response.text();
+        console.error("AI error:", response.status, t);
+        throw new Error("AI gateway error");
       }
-      const t = await response.text();
-      console.error("AI error:", response.status, t);
-      throw new Error("AI gateway error");
+
+      const data = await response.json();
+      content = data.choices?.[0]?.message?.content || "";
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
-
-    // Parse JSON from response (handle potential markdown fences)
+    // Parse JSON from response
     let parsed;
     try {
       const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       parsed = JSON.parse(cleaned);
     } catch {
       console.error("Failed to parse AI response:", content);
-      // Fallback: everything is missing
       parsed = {
-        extracted: {
-          buildType: null,
-          codeSource: null,
-          priorities: [],
-          dayOneFeatures: [],
-          projectName: null,
-          description: null,
-        },
+        extracted: { buildType: null, codeSource: null, priorities: [], dayOneFeatures: [], projectName: null, description: null },
         missingQuestions: ["buildType", "codeSource", "priorities", "dayOneFeatures"],
       };
     }
@@ -108,8 +148,7 @@ Rules:
   } catch (e) {
     console.error("analyze-prompt error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });

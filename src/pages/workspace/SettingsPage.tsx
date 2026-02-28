@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Settings, Key, Plus, Trash2, Eye, EyeOff, Loader2, Save, AlertTriangle, Tags, Cpu } from 'lucide-react';
+import { Settings, Key, Plus, Trash2, Eye, EyeOff, Loader2, Save, AlertTriangle, Tags, Cpu, Download, ExternalLink, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose,
 } from '@/components/ui/dialog';
@@ -29,10 +30,12 @@ const AI_MODELS = [
 const SettingsPage = () => {
   const { id } = useParams();
   const { toast } = useToast();
+  const { session } = useAuth();
   const queryClient = useQueryClient();
   const [showValues, setShowValues] = useState<Record<string, boolean>>({});
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
 
   // ─── Project info ───
   const { data: project } = useQuery({
@@ -149,8 +152,110 @@ const SettingsPage = () => {
     onError: (err: any) => toast({ title: 'Error', description: err.message, variant: 'destructive' }),
   });
 
+  // ─── Check if Gemini key is configured ───
+  const hasGeminiKey = secrets.some(s => s.key === 'GOOGLE_GEMINI_API_KEY');
+
+  // ─── Export ───
+  const handleExport = async () => {
+    if (!session || !id) return;
+    setIsExporting(true);
+    try {
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/export-project`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ projectId: id }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'Export failed' }));
+        throw new Error(err.error || 'Export failed');
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: 'Exported', description: 'Project ZIP downloaded successfully.' });
+    } catch (err: any) {
+      toast({ title: 'Export failed', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // ─── Quick add Gemini key ───
+  const [geminiKeyInput, setGeminiKeyInput] = useState('');
+  const [savingGeminiKey, setSavingGeminiKey] = useState(false);
+
+  const saveGeminiKey = async () => {
+    if (!geminiKeyInput.trim() || !id) return;
+    setSavingGeminiKey(true);
+    try {
+      const { error } = await (supabase.from('project_secrets' as any) as any).upsert(
+        { project_id: id, key: 'GOOGLE_GEMINI_API_KEY', value: geminiKeyInput.trim() },
+        { onConflict: 'project_id,key' }
+      );
+      if (error) throw error;
+      queryClient.invalidateQueries({ queryKey: ['project-secrets', id] });
+      toast({ title: 'Saved', description: 'Gemini API key configured. AI calls will now use Google directly.' });
+      setGeminiKeyInput('');
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    } finally {
+      setSavingGeminiKey(false);
+    }
+  };
+
   return (
     <div className="container max-w-2xl py-8 space-y-8">
+      {/* AI Provider */}
+      <div className="rounded-lg border border-border bg-card p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Zap className="h-5 w-5 text-primary" />
+          <h3 className="font-display font-semibold">AI Provider</h3>
+          {hasGeminiKey ? (
+            <Badge variant="outline" className="bg-primary/10 text-primary text-[10px]">Gemini Direct</Badge>
+          ) : (
+            <Badge variant="outline" className="text-[10px]">Lovable Gateway</Badge>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          {hasGeminiKey
+            ? 'AI calls use your Google Gemini API key directly — fully independent, no gateway dependency.'
+            : 'AI calls route through the Lovable gateway. Add a Gemini API key to go fully independent.'}
+        </p>
+
+        {!hasGeminiKey && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <ExternalLink className="h-3 w-3" />
+              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                Get a free API key from Google AI Studio →
+              </a>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                value={geminiKeyInput}
+                onChange={e => setGeminiKeyInput(e.target.value)}
+                placeholder="Paste your Gemini API key…"
+                className="font-mono text-xs flex-1"
+                onKeyDown={e => { if (e.key === 'Enter') saveGeminiKey(); }}
+              />
+              <Button size="sm" onClick={saveGeminiKey} disabled={!geminiKeyInput.trim() || savingGeminiKey}>
+                {savingGeminiKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save Key'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Project Config */}
       <div className="rounded-lg border border-border bg-card p-6">
         <div className="flex items-center gap-2 mb-4">
@@ -231,6 +336,21 @@ const SettingsPage = () => {
             Save Changes
           </Button>
         </div>
+      </div>
+
+      {/* Export */}
+      <div className="rounded-lg border border-border bg-card p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Download className="h-5 w-5 text-primary" />
+          <h3 className="font-display font-semibold">Export Project</h3>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Download your entire project as a ZIP file with package.json, vite config, and all source files. Ready to run locally with <code className="text-xs bg-muted px-1 py-0.5 rounded">npm install && npm run dev</code>.
+        </p>
+        <Button size="sm" variant="outline" onClick={handleExport} disabled={isExporting}>
+          {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+          Export as ZIP
+        </Button>
       </div>
 
       {/* Env Vars */}
