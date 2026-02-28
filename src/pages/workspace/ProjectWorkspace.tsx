@@ -31,13 +31,15 @@ const ProjectWorkspace = () => {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex h-screen flex-col bg-background overflow-hidden">
       <Navbar />
-      <div className="container flex items-center gap-3 py-4">
+      <div className="container flex items-center gap-3 py-2 shrink-0">
         <h1 className="font-display text-lg font-bold">{project?.name ?? 'Project'}</h1>
       </div>
-      <WorkspaceTabs />
-      <div className="flex-1">
+      <div className="shrink-0">
+        <WorkspaceTabs />
+      </div>
+      <div className="flex-1 min-h-0">
         <Outlet />
       </div>
     </div>
