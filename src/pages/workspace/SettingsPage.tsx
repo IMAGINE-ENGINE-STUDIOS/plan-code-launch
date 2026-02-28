@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Settings, Key, Plus, Trash2, Eye, EyeOff, Loader2, Save, AlertTriangle } from 'lucide-react';
+import { Settings, Key, Plus, Trash2, Eye, EyeOff, Loader2, Save, AlertTriangle, Tags, Cpu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -14,6 +16,15 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+
+const AI_MODELS = [
+  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Fast)' },
+  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (Best)' },
+  { value: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+  { value: 'google/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
+  { value: 'openai/gpt-5', label: 'GPT-5 (Powerful)' },
+  { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini (Balanced)' },
+];
 
 const SettingsPage = () => {
   const { id } = useParams();
@@ -36,19 +47,29 @@ const SettingsPage = () => {
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [stackInput, setStackInput] = useState('');
+  const [stack, setStack] = useState<string[]>([]);
+  const [priorities, setPriorities] = useState<string[]>([]);
+  const [priorityInput, setPriorityInput] = useState('');
+  const [aiModel, setAiModel] = useState('google/gemini-2.5-flash');
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
     if (project && !initialized) {
       setName(project.name);
       setDescription(project.description ?? '');
+      setStack(project.stack ?? []);
+      setPriorities(project.priorities ?? []);
+      setAiModel((project as any).ai_model ?? 'google/gemini-2.5-flash');
       setInitialized(true);
     }
   }, [project, initialized]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from('projects').update({ name, description }).eq('id', id!);
+      const { error } = await supabase.from('projects').update({
+        name, description, stack, priorities, ai_model: aiModel,
+      } as any).eq('id', id!);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -79,7 +100,16 @@ const SettingsPage = () => {
     },
   });
 
-  // ─── Secrets (database-backed) ───
+  const addTag = (list: string[], setList: (v: string[]) => void, value: string) => {
+    const trimmed = value.trim();
+    if (trimmed && !list.includes(trimmed)) setList([...list, trimmed]);
+  };
+
+  const removeTag = (list: string[], setList: (v: string[]) => void, index: number) => {
+    setList(list.filter((_, i) => i !== index));
+  };
+
+  // ─── Secrets ───
   const { data: secrets = [], isLoading: secretsLoading } = useQuery({
     queryKey: ['project-secrets', id],
     queryFn: async () => {
@@ -95,21 +125,16 @@ const SettingsPage = () => {
   const addSecretMutation = useMutation({
     mutationFn: async () => {
       const { error } = await (supabase.from('project_secrets' as any) as any).insert({
-        project_id: id!,
-        key: newKey.trim(),
-        value: newValue,
+        project_id: id!, key: newKey.trim(), value: newValue,
       });
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-secrets', id] });
       toast({ title: 'Added', description: `Secret ${newKey.trim()} added.` });
-      setNewKey('');
-      setNewValue('');
+      setNewKey(''); setNewValue('');
     },
-    onError: (err: any) => {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    },
+    onError: (err: any) => toast({ title: 'Error', description: err.message, variant: 'destructive' }),
   });
 
   const removeSecretMutation = useMutation({
@@ -121,9 +146,7 @@ const SettingsPage = () => {
       queryClient.invalidateQueries({ queryKey: ['project-secrets', id] });
       toast({ title: 'Removed', description: 'Secret removed.' });
     },
-    onError: (err: any) => {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    },
+    onError: (err: any) => toast({ title: 'Error', description: err.message, variant: 'destructive' }),
   });
 
   return (
@@ -143,6 +166,66 @@ const SettingsPage = () => {
             <Label>Description</Label>
             <Input value={description} onChange={e => setDescription(e.target.value)} />
           </div>
+
+          {/* Stack tags */}
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-1.5"><Tags className="h-3.5 w-3.5" />Tech Stack</Label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {stack.map((tag, i) => (
+                <Badge key={i} variant="secondary" className="gap-1 text-xs">
+                  {tag}
+                  <button onClick={() => removeTag(stack, setStack, i)} className="ml-0.5 hover:text-destructive">×</button>
+                </Badge>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={stackInput}
+                onChange={e => setStackInput(e.target.value)}
+                placeholder="Add technology…"
+                className="flex-1"
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(stack, setStack, stackInput); setStackInput(''); } }}
+              />
+              <Button size="sm" variant="outline" onClick={() => { addTag(stack, setStack, stackInput); setStackInput(''); }}>Add</Button>
+            </div>
+          </div>
+
+          {/* Priorities */}
+          <div className="space-y-1.5">
+            <Label>Priorities</Label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {priorities.map((tag, i) => (
+                <Badge key={i} variant="outline" className="gap-1 text-xs">
+                  {tag}
+                  <button onClick={() => removeTag(priorities, setPriorities, i)} className="ml-0.5 hover:text-destructive">×</button>
+                </Badge>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={priorityInput}
+                onChange={e => setPriorityInput(e.target.value)}
+                placeholder="Add priority…"
+                className="flex-1"
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(priorities, setPriorities, priorityInput); setPriorityInput(''); } }}
+              />
+              <Button size="sm" variant="outline" onClick={() => { addTag(priorities, setPriorities, priorityInput); setPriorityInput(''); }}>Add</Button>
+            </div>
+          </div>
+
+          {/* AI Model */}
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-1.5"><Cpu className="h-3.5 w-3.5" />AI Model</Label>
+            <Select value={aiModel} onValueChange={setAiModel}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {AI_MODELS.map(m => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <Button size="sm" onClick={() => updateMutation.mutate()} disabled={updateMutation.isPending}>
             {updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Save Changes
@@ -162,9 +245,7 @@ const SettingsPage = () => {
               <Button size="sm" variant="outline"><Plus className="mr-1.5 h-3.5 w-3.5" />Add</Button>
             </DialogTrigger>
             <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add Environment Variable</DialogTitle>
-              </DialogHeader>
+              <DialogHeader><DialogTitle>Add Environment Variable</DialogTitle></DialogHeader>
               <div className="space-y-4 py-2">
                 <div className="space-y-1.5">
                   <Label>Key</Label>
@@ -176,9 +257,7 @@ const SettingsPage = () => {
                 </div>
               </div>
               <DialogFooter>
-                <DialogClose asChild>
-                  <Button variant="outline">Cancel</Button>
-                </DialogClose>
+                <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
                 <DialogClose asChild>
                   <Button onClick={() => addSecretMutation.mutate()} disabled={!newKey.trim() || addSecretMutation.isPending}>
                     {addSecretMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -226,23 +305,18 @@ const SettingsPage = () => {
         </p>
         <AlertDialog>
           <AlertDialogTrigger asChild>
-            <Button variant="destructive" size="sm">
-              <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete Project
-            </Button>
+            <Button variant="destructive" size="sm"><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete Project</Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete project?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will permanently delete "{name}" and all associated data including chat history and plans. This action cannot be undone.
+                This will permanently delete "{name}" and all associated data. This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => deleteMutation.mutate()}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
+              <AlertDialogAction onClick={() => deleteMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                 {deleteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Delete Forever
               </AlertDialogAction>
