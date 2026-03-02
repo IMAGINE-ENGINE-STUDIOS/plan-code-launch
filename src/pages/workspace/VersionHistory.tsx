@@ -80,6 +80,25 @@ const VersionHistory = () => {
   const handleRollback = async (version: typeof versions[0]) => {
     setRollingBack(version.id);
     try {
+      // Auto-snapshot current state before rolling back
+      const { data: currentFiles } = await supabase
+        .from('project_files')
+        .select('file_path, content')
+        .eq('project_id', projectId!);
+
+      if (currentFiles && currentFiles.length > 0) {
+        const currentSnapshot: Record<string, string> = {};
+        currentFiles.forEach((f: any) => { currentSnapshot[f.file_path] = f.content; });
+
+        await (supabase.from('project_versions' as any) as any).insert({
+          project_id: projectId!,
+          user_id: user!.id,
+          version_label: `v${versions.length + 1}.0.0`,
+          note: `Auto-backup before rollback to ${version.version_label}`,
+          snapshot: currentSnapshot,
+        });
+      }
+
       const snapshot = version.snapshot || {};
       // Delete existing files and replace with snapshot
       await supabase.from('project_files').delete().eq('project_id', projectId!);
@@ -91,7 +110,6 @@ const VersionHistory = () => {
           file_path,
           content,
         }));
-        // Insert in batches of 50
         for (let i = 0; i < rows.length; i += 50) {
           const batch = rows.slice(i, i + 50);
           const { error } = await supabase.from('project_files').insert(batch);
@@ -99,7 +117,8 @@ const VersionHistory = () => {
         }
       }
 
-      toast({ title: 'Rolled back', description: `Project restored to ${version.version_label}` });
+      queryClient.invalidateQueries({ queryKey: ['project-versions', projectId] });
+      toast({ title: 'Rolled back', description: `Project restored to ${version.version_label}. A backup of your previous state was saved.` });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     } finally {

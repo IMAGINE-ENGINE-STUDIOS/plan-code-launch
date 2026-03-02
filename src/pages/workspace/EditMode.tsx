@@ -206,9 +206,42 @@ const EditMode = () => {
     [projectId, session]
   );
 
+  const autoSnapshot = useCallback(async (label: string) => {
+    if (!projectId || !session?.user?.id) return;
+    try {
+      const { data: currentFiles } = await supabase
+        .from('project_files')
+        .select('file_path, content')
+        .eq('project_id', projectId);
+      if (!currentFiles || currentFiles.length === 0) return;
+
+      const snapshot: Record<string, string> = {};
+      currentFiles.forEach((f: any) => { snapshot[f.file_path] = f.content; });
+
+      // Check how many versions exist
+      const { count } = await (supabase.from('project_versions' as any) as any)
+        .select('id', { count: 'exact', head: true })
+        .eq('project_id', projectId);
+
+      await (supabase.from('project_versions' as any) as any).insert({
+        project_id: projectId,
+        user_id: session.user.id,
+        version_label: `v${(count || 0) + 1}.0.0`,
+        note: label,
+        snapshot,
+      });
+    } catch (e) {
+      console.error('Auto-snapshot failed:', e);
+    }
+  }, [projectId, session]);
+
   const applyFilesToPreview = useCallback((content: string) => {
     const files = parseFileChanges(content);
     if (Object.keys(files).length === 0) return;
+
+    // Auto-snapshot before applying changes
+    autoSnapshot(`Before AI edit (${Object.keys(files).length} files changed)`);
+
     setPreviewFiles(prev => ({ ...prev, ...files }));
     // Persist changed files to project_files
     if (projectId && session?.user?.id) {
@@ -219,7 +252,7 @@ const EditMode = () => {
         );
       });
     }
-  }, [projectId, session]);
+  }, [projectId, session, autoSnapshot]);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isStreaming || !session) return;
