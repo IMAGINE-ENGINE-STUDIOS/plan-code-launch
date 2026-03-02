@@ -102,19 +102,30 @@ const ImportProject = () => {
       const data: ImportResult = await res.json();
       if (!res.ok) throw new Error((data as any).error || 'Import failed');
 
+      // Extract dependencies from package.json if present
+      let detectedDeps: Record<string, string> = {};
+      const pkgJsonContent = data.files['package.json'] || data.files['/package.json'];
+      if (pkgJsonContent) {
+        try {
+          const pkgJson = JSON.parse(pkgJsonContent);
+          detectedDeps = { ...(pkgJson.dependencies || {}), ...(pkgJson.devDependencies || {}) };
+        } catch {}
+      }
+
       const { data: project, error: projErr } = await supabase.from('projects').insert({
         name: `${data.repo} (imported)`,
         description: `Imported from github.com/${data.owner}/${data.repo}`,
         user_id: user.id,
         status: 'active',
         source_repo: `https://github.com/${data.owner}/${data.repo}`,
-      }).select('id').single();
+        dependencies: detectedDeps,
+      } as any).select('id').single();
 
       if (projErr || !project) throw new Error(projErr?.message || 'Failed to create project');
 
       const fileRows = Object.entries(data.files).map(([file_path, content]) => ({
         project_id: project.id,
-        file_path,
+        file_path: file_path.startsWith('/') ? file_path : `/${file_path}`,
         content,
       }));
 

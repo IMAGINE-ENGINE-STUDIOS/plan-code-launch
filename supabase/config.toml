@@ -14,3 +14,9 @@ verify_jwt = false
 
 [functions.export-project]
 verify_jwt = false
+
+[functions.publish-project]
+verify_jwt = false
+
+[functions.connect-supabase]
+verify_jwt = false
