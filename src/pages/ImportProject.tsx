@@ -116,7 +116,7 @@ const ImportProject = () => {
         name: `${data.repo} (imported)`,
         description: `Imported from github.com/${data.owner}/${data.repo}`,
         user_id: user.id,
-        status: 'active',
+        status: 'imported',
         source_repo: `https://github.com/${data.owner}/${data.repo}`,
         dependencies: detectedDeps,
       } as any).select('id').single();
@@ -210,7 +210,7 @@ const ImportProject = () => {
         name: `${sbProjectName} (pulled)`,
         description: `Pulled from remote Supabase instance`,
         user_id: user.id,
-        status: 'active',
+        status: 'imported',
       }).select('id').single();
 
       if (projErr || !project) throw new Error(projErr?.message || 'Failed to create project');
@@ -434,7 +434,7 @@ const ImportProject = () => {
               </div>
             </div>
 
-            <Button onClick={scanSupabase} disabled={!sbUrl || (!sbAnonKey && !sbServiceKey) || sbScanning} className="w-full mb-6">
+            <Button onClick={scanSupabase} disabled={!sbUrl || !sbServiceKey || sbScanning} className="w-full mb-6">
               {sbScanning ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Search className="mr-1.5 h-4 w-4" />}
               Scan Remote Project
             </Button>
