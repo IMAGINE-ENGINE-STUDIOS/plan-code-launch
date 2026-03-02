@@ -7,17 +7,18 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/contexts/AuthContext';
 
 const PublishPage = () => {
   const { id: projectId } = useParams();
   const { toast } = useToast();
+  const { session } = useAuth();
   const queryClient = useQueryClient();
   const [customDomain, setCustomDomain] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Load project data
   const { data: project } = useQuery({
     queryKey: ['project', projectId],
     queryFn: async () => {
@@ -29,7 +30,7 @@ const PublishPage = () => {
   });
 
   const isPublished = project?.status === 'published';
-  const publishedUrl = project?.published_url || `https://${project?.name?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'app'}-${projectId?.slice(0, 8)}.imagineengine.app`;
+  const publishedUrl = project?.published_url || '';
   const savedDomain = project?.custom_domain || '';
   const hasCustomDomain = !!savedDomain;
 
@@ -38,16 +39,23 @@ const PublishPage = () => {
   }, [savedDomain]);
 
   const handlePublish = async () => {
+    if (!session || !projectId) return;
     setPublishing(true);
     try {
-      const { error } = await supabase.from('projects').update({
-        status: 'published',
-        published_url: publishedUrl,
-      }).eq('id', projectId!);
-      if (error) throw error;
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/publish-project`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ projectId }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Publish failed');
+
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
-      toast({ title: 'Published!', description: `Your app is live at ${publishedUrl}` });
+      toast({ title: 'Published!', description: `Your app is live at ${data.url}` });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     } finally {
@@ -56,6 +64,7 @@ const PublishPage = () => {
   };
 
   const handleCopyUrl = () => {
+    if (!publishedUrl) return;
     navigator.clipboard.writeText(publishedUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -87,30 +96,38 @@ const PublishPage = () => {
           <Globe className="h-5 w-5 text-primary" />
           <h3 className="font-display font-semibold">Platform URL</h3>
         </div>
-        <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-sm font-mono">
-          <span className="text-foreground truncate">{publishedUrl}</span>
-          {isPublished && <CheckCircle2 className="ml-auto h-4 w-4 shrink-0 text-[hsl(var(--success))]" />}
-        </div>
+
+        {publishedUrl ? (
+          <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-sm font-mono">
+            <span className="text-foreground truncate">{publishedUrl}</span>
+            <CheckCircle2 className="ml-auto h-4 w-4 shrink-0 text-[hsl(var(--success))]" />
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground mb-2">
+            Publish your project to generate a live preview URL.
+          </p>
+        )}
+
         <div className="mt-4 flex items-center gap-2">
-          <Button size="sm" onClick={handlePublish} disabled={publishing || isPublished}>
+          <Button size="sm" onClick={handlePublish} disabled={publishing}>
             {publishing ? (
               <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Publishing…</>
             ) : isPublished ? (
-              <><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Published</>
+              <><ExternalLink className="mr-1.5 h-3.5 w-3.5" />Re-publish</>
             ) : (
               <><ExternalLink className="mr-1.5 h-3.5 w-3.5" />Publish Now</>
             )}
           </Button>
-          {isPublished && (
+          {publishedUrl && (
             <Button size="sm" variant="outline" onClick={handleCopyUrl}>
               {copied ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Copy className="mr-1.5 h-3.5 w-3.5" />}
               {copied ? 'Copied' : 'Copy URL'}
             </Button>
           )}
         </div>
-        {isPublished && (
+        {publishedUrl && (
           <a href={publishedUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs text-primary hover:underline">
-            {publishedUrl} <ExternalLink className="h-3 w-3" />
+            Open published site <ExternalLink className="h-3 w-3" />
           </a>
         )}
       </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Settings, Key, Plus, Trash2, Eye, EyeOff, Loader2, Save, AlertTriangle, Tags, Cpu, Download, ExternalLink, Zap } from 'lucide-react';
+import { Settings, Key, Plus, Trash2, Eye, EyeOff, Loader2, Save, AlertTriangle, Tags, Cpu, Download, ExternalLink, Zap, Database, CheckCircle2, XCircle, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +26,167 @@ const AI_MODELS = [
   { value: 'openai/gpt-5', label: 'GPT-5 (Powerful)' },
   { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini (Balanced)' },
 ];
+
+// ─── Backend Connection Component ───
+const BackendConnection = ({ projectId }: { projectId: string }) => {
+  const { session } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [connUrl, setConnUrl] = useState('');
+  const [connAnonKey, setConnAnonKey] = useState('');
+  const [connServiceKey, setConnServiceKey] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connected' | 'error'>('idle');
+
+  // Load existing connection from secrets
+  const { data: secrets = [] } = useQuery({
+    queryKey: ['backend-connection-secrets', projectId],
+    queryFn: async () => {
+      const { data } = await (supabase.from('project_secrets' as any) as any)
+        .select('key, value')
+        .eq('project_id', projectId)
+        .in('key', ['CONNECTED_SUPABASE_URL', 'CONNECTED_SUPABASE_ANON_KEY', 'CONNECTED_SUPABASE_SERVICE_KEY']);
+      return data as Array<{ key: string; value: string }> || [];
+    },
+    enabled: !!projectId,
+  });
+
+  useEffect(() => {
+    const urlSecret = secrets.find(s => s.key === 'CONNECTED_SUPABASE_URL');
+    const anonSecret = secrets.find(s => s.key === 'CONNECTED_SUPABASE_ANON_KEY');
+    const serviceSecret = secrets.find(s => s.key === 'CONNECTED_SUPABASE_SERVICE_KEY');
+    if (urlSecret) { setConnUrl(urlSecret.value); setConnectionStatus('connected'); }
+    if (anonSecret) setConnAnonKey(anonSecret.value);
+    if (serviceSecret) setConnServiceKey(serviceSecret.value);
+  }, [secrets]);
+
+  const testConnection = async () => {
+    if (!connUrl || !session) return;
+    setTesting(true);
+    try {
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/connect-supabase`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          remoteUrl: connUrl,
+          remoteAnonKey: connAnonKey,
+          remoteServiceKey: connServiceKey,
+          projectId,
+        }),
+      });
+      const data = await resp.json();
+      if (data.connected) {
+        setConnectionStatus('connected');
+        toast({ title: 'Connected', description: 'Successfully connected to the remote backend.' });
+      } else {
+        setConnectionStatus('error');
+        toast({ title: 'Connection failed', description: data.error || 'Could not connect.', variant: 'destructive' });
+      }
+    } catch (err: any) {
+      setConnectionStatus('error');
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const saveConnection = async () => {
+    if (!connUrl || !projectId) return;
+    setSaving(true);
+    try {
+      const secretPairs = [
+        { key: 'CONNECTED_SUPABASE_URL', value: connUrl },
+        { key: 'CONNECTED_SUPABASE_ANON_KEY', value: connAnonKey },
+        { key: 'CONNECTED_SUPABASE_SERVICE_KEY', value: connServiceKey },
+      ];
+      for (const pair of secretPairs) {
+        if (!pair.value) continue;
+        await (supabase.from('project_secrets' as any) as any).upsert(
+          { project_id: projectId, key: pair.key, value: pair.value },
+          { onConflict: 'project_id,key' }
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: ['backend-connection-secrets', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+      toast({ title: 'Saved', description: 'Backend connection details saved.' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const disconnect = async () => {
+    try {
+      await (supabase.from('project_secrets' as any) as any)
+        .delete()
+        .eq('project_id', projectId)
+        .in('key', ['CONNECTED_SUPABASE_URL', 'CONNECTED_SUPABASE_ANON_KEY', 'CONNECTED_SUPABASE_SERVICE_KEY']);
+      setConnUrl(''); setConnAnonKey(''); setConnServiceKey('');
+      setConnectionStatus('idle');
+      queryClient.invalidateQueries({ queryKey: ['backend-connection-secrets', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+      toast({ title: 'Disconnected', description: 'Backend connection removed.' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Database className="h-5 w-5 text-primary" />
+        <h3 className="font-display font-semibold">Backend Connection</h3>
+        {connectionStatus === 'connected' && (
+          <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--success))]">
+            <CheckCircle2 className="h-3 w-3" />Connected
+          </span>
+        )}
+        {connectionStatus === 'error' && (
+          <span className="inline-flex items-center gap-1 text-xs text-destructive">
+            <XCircle className="h-3 w-3" />Failed
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-muted-foreground mb-4">
+        Connect an external Supabase project to this workspace. This allows your project to interact with a remote backend.
+      </p>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label>Supabase URL</Label>
+          <Input value={connUrl} onChange={e => setConnUrl(e.target.value)} placeholder="https://xyzproject.supabase.co" className="font-mono text-xs" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Anon Key</Label>
+          <Input type="password" value={connAnonKey} onChange={e => setConnAnonKey(e.target.value)} placeholder="eyJhbGciOiJIUzI1NiIs..." className="font-mono text-xs" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Service Role Key <span className="text-xs text-muted-foreground">(optional)</span></Label>
+          <Input type="password" value={connServiceKey} onChange={e => setConnServiceKey(e.target.value)} placeholder="eyJhbGciOiJIUzI1NiIs..." className="font-mono text-xs" />
+        </div>
+        <div className="flex items-center gap-2 pt-1">
+          <Button size="sm" variant="outline" onClick={testConnection} disabled={!connUrl || testing}>
+            {testing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Wifi className="mr-1.5 h-3.5 w-3.5" />}
+            Test Connection
+          </Button>
+          <Button size="sm" onClick={saveConnection} disabled={!connUrl || saving}>
+            {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+            Save
+          </Button>
+          {connectionStatus === 'connected' && (
+            <Button size="sm" variant="ghost" onClick={disconnect} className="text-destructive hover:text-destructive">
+              Disconnect
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const SettingsPage = () => {
   const { id } = useParams();
@@ -413,6 +574,9 @@ const SettingsPage = () => {
           )}
         </div>
       </div>
+
+      {/* Backend Connection */}
+      <BackendConnection projectId={id!} />
 
       {/* Danger Zone */}
       <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">

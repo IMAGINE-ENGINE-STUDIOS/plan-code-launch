@@ -292,6 +292,7 @@ export type Database = {
           created_at: string
           custom_domain: string | null
           day_one_features: string[] | null
+          dependencies: Json | null
           description: string
           id: string
           name: string
@@ -310,6 +311,7 @@ export type Database = {
           created_at?: string
           custom_domain?: string | null
           day_one_features?: string[] | null
+          dependencies?: Json | null
           description?: string
           id?: string
           name: string
@@ -328,6 +330,7 @@ export type Database = {
           created_at?: string
           custom_domain?: string | null
           day_one_features?: string[] | null
+          dependencies?: Json | null
           description?: string
           id?: string
           name?: string

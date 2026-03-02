@@ -22,6 +22,7 @@ import SettingsPage from "./pages/workspace/SettingsPage";
 import VersionHistory from "./pages/workspace/VersionHistory";
 import ChatMode from "./pages/workspace/ChatMode";
 import CostsPage from "./pages/CostsPage";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/auth" element={<Auth />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                 <Route path="/new-project" element={<ProtectedRoute><NewProject /></ProtectedRoute>} />
                 <Route path="/project/new/plan" element={<ProtectedRoute><PlanReview /></ProtectedRoute>} />

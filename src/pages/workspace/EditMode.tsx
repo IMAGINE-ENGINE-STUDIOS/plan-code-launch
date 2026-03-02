@@ -86,7 +86,7 @@ const EditMode = () => {
     if (!projectId) return;
     supabase
       .from('projects')
-      .select('name, description, day_one_features')
+      .select('name, description, day_one_features, dependencies')
       .eq('id', projectId)
       .single()
       .then(({ data }) => {
@@ -96,6 +96,11 @@ const EditMode = () => {
             description: data.description,
             day_one_features: data.day_one_features || [],
           });
+          // Load project-level dependencies from DB
+          const dbDeps = (data as any).dependencies;
+          if (dbDeps && typeof dbDeps === 'object' && Object.keys(dbDeps).length > 0) {
+            setDynamicDeps(prev => ({ ...dbDeps, ...prev }));
+          }
         }
       });
   }, [projectId]);
