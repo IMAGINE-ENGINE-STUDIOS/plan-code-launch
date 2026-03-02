@@ -235,24 +235,23 @@ const EditMode = () => {
     }
   }, [projectId, session]);
 
-  const applyFilesToPreview = useCallback((content: string) => {
+  const applyFilesToPreview = useCallback(async (content: string) => {
     const files = parseFileChanges(content);
     if (Object.keys(files).length === 0) return;
-
-    // Auto-snapshot before applying changes
-    autoSnapshot(`Before AI edit (${Object.keys(files).length} files changed)`);
 
     setPreviewFiles(prev => ({ ...prev, ...files }));
     // Persist changed files to project_files
     if (projectId && session?.user?.id) {
-      Object.entries(files).forEach(async ([file_path, fileContent]) => {
-        await supabase.from('project_files').upsert(
-          { project_id: projectId, file_path, content: fileContent },
-          { onConflict: 'project_id,file_path' }
-        );
-      });
+      await Promise.all(
+        Object.entries(files).map(([file_path, fileContent]) =>
+          supabase.from('project_files').upsert(
+            { project_id: projectId, file_path, content: fileContent },
+            { onConflict: 'project_id,file_path' }
+          )
+        )
+      );
     }
-  }, [projectId, session, autoSnapshot]);
+  }, [projectId, session]);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isStreaming || !session) return;
@@ -345,8 +344,17 @@ const EditMode = () => {
         setBlockedContent(assistantSoFar);
         // Don't apply files yet — will apply after all keys are saved
       } else {
-        applyFilesToPreview(assistantSoFar);
+        await applyFilesToPreview(assistantSoFar);
       }
+
+      // Auto-snapshot after every prompt — save the current state as a new version
+      const changedFiles = parseFileChanges(assistantSoFar);
+      const fileCount = Object.keys(changedFiles).length;
+      const promptPreview = text.trim().slice(0, 60);
+      await autoSnapshot(fileCount > 0
+        ? `"${promptPreview}" (${fileCount} files changed)`
+        : `"${promptPreview}"`
+      );
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
