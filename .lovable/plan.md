@@ -1,45 +1,78 @@
 
 
-## Integrate 3D/WebGL Libraries for User Projects
+## Plan: Password Recovery, Publish Fix, and Project Import Enhancements
 
-### What Changes
+This plan covers 4 areas you requested. No existing features, titles, or UI will be modified.
 
-Two files need updating so users can build 3D apps and games inside their projects:
+---
 
-### 1. `src/components/SandpackPreview.tsx` — Add 3D dependencies
+### 1. Password Recovery on Login Page
 
-Add these three libraries to the Sandpack `dependencies` object (after the existing entries, before `extraDependencies`):
+**What:** Add a "Forgot password?" link to `src/pages/Auth.tsx` and create a `/reset-password` page.
 
-```
-'three': '^0.170.0',
-'@react-three/fiber': '^8.18.0',
-'@react-three/drei': '^9.122.0',
-```
+- Add a "Forgot password?" button below the password field that triggers `supabase.auth.resetPasswordForEmail()` with `redirectTo: window.location.origin + '/reset-password'`
+- Create `src/pages/ResetPassword.tsx` — detects `type=recovery` in URL hash, shows a "Set new password" form, calls `supabase.auth.updateUser({ password })`
+- Add `/reset-password` as a public route in `App.tsx`
 
-These run only inside the Sandpack preview sandbox — they are not installed into the host app.
+---
 
-### 2. `supabase/functions/chat/index.ts` — Update AI system prompt
+### 2. Platform URL / Publish Tab Fix
 
-Add a "3D / WebGL" section to the system prompt (after the "Charts" / "Notifications" lines, around line 267) so the AI knows these libraries are available and generates correct code:
+**What:** The publish button currently only updates the database status but doesn't actually deploy anything. The generated URL (`imagineengine.app`) doesn't resolve.
 
-```
-3D / WebGL (use for any 3D scenes, games, or WebGL features):
-  three (Three.js core), @react-three/fiber (React renderer for Three.js — use <Canvas>),
-  @react-three/drei (helpers: OrbitControls, Text3D, Environment, useGLTF, Stars, Sky, etc.)
+**Fix approach:**
+- The publish flow needs to actually build and deploy the project files. This requires a backend function that takes project files, bundles them, and deploys to a hosting target
+- Create an edge function `publish-project` that: takes project files from `project_files` table, generates a static build artifact, and stores it in a storage bucket
+- Create a storage bucket `published-sites` to serve static files
+- Update `PublishPage.tsx` to call this edge function instead of just updating the DB status
+- The published URL will point to the storage bucket's public URL (e.g., `https://<supabase-url>/storage/v1/object/public/published-sites/<project-id>/index.html`)
 
-  3D GUIDELINES:
-  - Always wrap 3D content in <Canvas> from @react-three/fiber
-  - Use drei helpers for common needs: OrbitControls, PerspectiveCamera, Environment
-  - For games: use useFrame() for game loops, drei Physics helpers for collisions
-  - For lighting: <ambientLight>, <pointLight>, <directionalLight>
-  - For models: useGLTF from drei to load .glb/.gltf files
-  - Standard meshes: <mesh>, <boxGeometry>, <sphereGeometry>, <planeGeometry>
-  - Materials: <meshStandardMaterial>, <meshPhongMaterial>, <meshBasicMaterial>
-```
+**Note:** Full production hosting (custom domains, SSL) would require additional infrastructure beyond what can be done here. The initial implementation will provide a working preview URL via storage.
 
-### Version Pinning Rationale
+---
 
-- `@react-three/fiber` v8 is required for React 18 compatibility (v9+ needs React 19)
-- `@react-three/drei` v9 matches fiber v8
-- `three` v0.170 is current stable
+### 3. Supabase Project Connector (Settings Page)
+
+**What:** Add a "Backend Connection" section to the project Settings page allowing users to connect their own Supabase project to an Imagine Engine project.
+
+- Add fields in Settings: Supabase URL, Anon Key, Service Role Key (stored in `project_secrets`)
+- Create an edge function `connect-supabase` that validates the connection by querying the remote Supabase instance
+- Store connection details as project secrets (`CONNECTED_SUPABASE_URL`, `CONNECTED_SUPABASE_ANON_KEY`, `CONNECTED_SUPABASE_SERVICE_KEY`)
+- Show connection status (connected/disconnected) with a test button
+
+---
+
+### 4. GitHub Import Enhancement (Lovable Project Compatibility)
+
+**What:** Improve the existing GitHub import to handle Lovable-exported projects properly so they preview and work correctly.
+
+- The current import already fetches files from GitHub — the issue is that imported Lovable projects may have dependencies and configurations that aren't being installed/applied in the Sandpack preview
+- Update `ImportProject.tsx` to detect `package.json` in imported files and extract dependencies
+- Pass detected dependencies to the project so `SandpackPreview` installs them
+- Add a `dependencies` column to `projects` table (jsonb) to store detected dependencies from imported projects
+- Update `EditMode.tsx` / `SandpackPreview` to load project-specific dependencies from the DB
+- Ensure all file paths are correctly mapped for Sandpack (e.g., `/src/App.tsx` format)
+
+---
+
+### Technical Details
+
+**Database changes:**
+- Add `dependencies jsonb DEFAULT '{}'` column to `projects` table
+
+**New files:**
+- `src/pages/ResetPassword.tsx` — password reset form
+- `supabase/functions/publish-project/index.ts` — build & deploy edge function
+- `supabase/functions/connect-supabase/index.ts` — validate remote Supabase connection
+
+**Modified files:**
+- `src/pages/Auth.tsx` — add forgot password link
+- `src/App.tsx` — add `/reset-password` route
+- `src/pages/workspace/PublishPage.tsx` — call publish edge function
+- `src/pages/workspace/SettingsPage.tsx` — add backend connection section
+- `src/pages/ImportProject.tsx` — detect and store dependencies from imported projects
+- `src/pages/workspace/EditMode.tsx` — load project dependencies for preview
+
+**New storage bucket:**
+- `published-sites` (public) — stores deployed project builds
 
