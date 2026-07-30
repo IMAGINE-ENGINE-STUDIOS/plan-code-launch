@@ -12,6 +12,8 @@ import { Navigate } from 'react-router-dom';
 
 const Auth = () => {
   const [searchParams] = useSearchParams();
+  // TEMP: auth bypass — send everyone straight to the dashboard
+  const BYPASS_AUTH = true;
   const [isSignUp, setIsSignUp] = useState(searchParams.get('mode') === 'signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -21,6 +23,7 @@ const Auth = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
 
+  if (BYPASS_AUTH) return <Navigate to="/dashboard" replace />;
   if (authLoading) return null;
   if (user) return <Navigate to="/dashboard" replace />;
 
