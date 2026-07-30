@@ -30,7 +30,10 @@ const PlanReview = () => {
   const plan = generatePlan(answers);
 
   const handleBuild = async () => {
-    if (!user) return;
+    if (!user) {
+      toast({ title: 'Please wait', description: 'Session is still initializing — try again in a second.' });
+      return;
+    }
     setBuilding(true);
 
     try {
