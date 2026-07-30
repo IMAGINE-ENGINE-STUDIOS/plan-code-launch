@@ -11,6 +11,22 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+// TEMP: auth bypass — signs into a shared demo account so DB writes work
+const BYPASS_AUTH = true;
+const DEMO_EMAIL = 'demo@imagine-engine.app';
+const DEMO_PASSWORD = 'demo-imagine-engine-2026';
+
+async function ensureDemoSession() {
+  const { error } = await supabase.auth.signInWithPassword({
+    email: DEMO_EMAIL,
+    password: DEMO_PASSWORD,
+  });
+  if (error) {
+    await supabase.auth.signUp({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
+    await supabase.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
+  }
+}
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -23,7 +39,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setLoading(false);
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session && BYPASS_AUTH) {
+        await ensureDemoSession();
+        const { data } = await supabase.auth.getSession();
+        setSession(data.session);
+        setUser(data.session?.user ?? null);
+        setLoading(false);
+        return;
+      }
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
