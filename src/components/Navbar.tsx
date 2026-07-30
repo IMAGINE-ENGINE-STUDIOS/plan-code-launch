@@ -8,6 +8,8 @@ const Navbar = () => {
   const location = useLocation();
   const isLanding = location.pathname === "/";
   const { user, signOut } = useAuth();
+  // TEMP: auth bypass — always show the app navigation
+  const BYPASS_AUTH = true;
 
   return (
     <nav className="sticky top-0 z-50 glass">
@@ -17,7 +19,7 @@ const Navbar = () => {
           IMAGINE ENGINE
         </Link>
         <div className="flex items-center gap-3">
-          {!user ? (
+          {!user && !BYPASS_AUTH ? (
             <>
               <Button variant="ghost" size="sm" asChild>
                 <Link to="/auth">Sign in</Link>
