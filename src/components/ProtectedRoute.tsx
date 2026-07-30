@@ -1,8 +1,13 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 
+// TEMP: auth bypass — set to false to re-enable login protection
+const BYPASS_AUTH = true;
+
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
+
+  if (BYPASS_AUTH) return <>{children}</>;
 
   if (loading) {
     return (
